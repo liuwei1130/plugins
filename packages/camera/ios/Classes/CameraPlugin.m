@@ -603,6 +603,38 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     }
   }
 }
+
+- (bool) hasLampWithResult:(FlutterResult)result  {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    bool hasLamp = ([device hasTorch] && [device hasFlash]);
+    result([NSNumber numberWithBool:hasLamp]);
+    return hasLamp;
+}
+
+- (void) turnOffWithResult:(FlutterResult)result  {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    bool hasLamp = ([device hasTorch] && [device hasFlash]);
+    result([NSNumber numberWithBool:hasLamp]);
+    if (hasLamp){
+        [device lockForConfiguration:nil];
+        [device setTorchMode:AVCaptureTorchModeOff];
+        [device unlockForConfiguration];
+    }
+}
+
+- (void)turnOnWithIntensity:(float)level result:(FlutterResult)result {
+    AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+    bool hasLamp = ([device hasTorch] && [device hasFlash]);
+    result([NSNumber numberWithBool:hasLamp]);
+    if (hasLamp){
+        [device lockForConfiguration:nil];
+        NSError *error = nil;
+        float acceptedLevel = (level < AVCaptureMaxAvailableTorchLevel ? level : AVCaptureMaxAvailableTorchLevel);
+        NSLog(@"FLash level: %f", acceptedLevel);
+        [device setTorchModeOnWithLevel:acceptedLevel error:&error];
+        [device unlockForConfiguration];
+    }
+}
 @end
 
 @interface CameraPlugin ()
@@ -731,6 +763,13 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
       [_camera startVideoRecordingAtPath:call.arguments[@"filePath"] result:result];
     } else if ([@"stopVideoRecording" isEqualToString:call.method]) {
       [_camera stopVideoRecordingWithResult:result];
+    } else if ([@"turnOn" isEqualToString:call.method]) {
+        NSNumber *intensity = call.arguments[@"intensity"];
+        [_camera turnOnWithIntensity:intensity.doubleValue result:result];
+    } else if ([@"turnOff" isEqualToString:call.method]) {
+        [_camera turnOffWithResult:result];
+    } else if ([@"hasLamp" isEqualToString:call.method]) {
+        [_camera hasLampWithResult:result];
     } else {
       result(FlutterMethodNotImplemented);
     }

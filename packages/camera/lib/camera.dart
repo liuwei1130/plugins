@@ -49,8 +49,8 @@ CameraLensDirection _parseCameraLensDirection(String string) {
 /// May throw a [CameraException].
 Future<List<CameraDescription>> availableCameras() async {
   try {
-    final List<Map<dynamic, dynamic>> cameras = await _channel
-        .invokeListMethod<Map<dynamic, dynamic>>('availableCameras');
+    final List<Map<dynamic, dynamic>> cameras =
+        await _channel.invokeListMethod<Map<dynamic, dynamic>>('availableCameras');
     return cameras.map((Map<dynamic, dynamic> camera) {
       return CameraDescription(
         name: camera['name'],
@@ -80,9 +80,7 @@ class CameraDescription {
 
   @override
   bool operator ==(Object o) {
-    return o is CameraDescription &&
-        o.name == name &&
-        o.lensDirection == lensDirection;
+    return o is CameraDescription && o.name == name && o.lensDirection == lensDirection;
   }
 
   @override
@@ -115,9 +113,7 @@ class CameraPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return controller.value.isInitialized
-        ? Texture(textureId: controller._textureId)
-        : Container();
+    return controller.value.isInitialized ? Texture(textureId: controller._textureId) : Container();
   }
 }
 
@@ -130,14 +126,20 @@ class CameraValue {
     this.isRecordingVideo,
     this.isTakingPicture,
     this.isStreamingImages,
+    this.isOpenLight,
   });
 
   const CameraValue.uninitialized()
       : this(
-            isInitialized: false,
-            isRecordingVideo: false,
-            isTakingPicture: false,
-            isStreamingImages: false);
+          isInitialized: false,
+          isRecordingVideo: false,
+          isTakingPicture: false,
+          isStreamingImages: false,
+          isOpenLight: false,
+        );
+
+  /// 是否打开闪光灯
+  final bool isOpenLight;
 
   /// True after [CameraController.initialize] has completed successfully.
   final bool isInitialized;
@@ -172,6 +174,7 @@ class CameraValue {
     bool isStreamingImages,
     String errorDescription,
     Size previewSize,
+    bool isOpenLight,
   }) {
     return CameraValue(
       isInitialized: isInitialized ?? this.isInitialized,
@@ -180,6 +183,7 @@ class CameraValue {
       isRecordingVideo: isRecordingVideo ?? this.isRecordingVideo,
       isTakingPicture: isTakingPicture ?? this.isTakingPicture,
       isStreamingImages: isStreamingImages ?? this.isStreamingImages,
+      isOpenLight: isOpenLight ?? this.isOpenLight
     );
   }
 
@@ -191,7 +195,9 @@ class CameraValue {
         'isInitialized: $isInitialized, '
         'errorDescription: $errorDescription, '
         'previewSize: $previewSize, '
-        'isStreamingImages: $isStreamingImages)';
+        'isStreamingImages: $isStreamingImages, '
+        'isOpenLight: $isOpenLight'
+        ')';
   }
 }
 
@@ -224,8 +230,7 @@ class CameraController extends ValueNotifier<CameraValue> {
     }
     try {
       _creatingCompleter = Completer<void>();
-      final Map<String, dynamic> reply =
-          await _channel.invokeMapMethod<String, dynamic>(
+      final Map<String, dynamic> reply = await _channel.invokeMapMethod<String, dynamic>(
         'initialize',
         <String, dynamic>{
           'cameraName': description.name,
@@ -243,10 +248,9 @@ class CameraController extends ValueNotifier<CameraValue> {
     } on PlatformException catch (e) {
       throw CameraException(e.code, e.message);
     }
-    _eventSubscription =
-        EventChannel('flutter.io/cameraPlugin/cameraEvents$_textureId')
-            .receiveBroadcastStream()
-            .listen(_listener);
+    _eventSubscription = EventChannel('flutter.io/cameraPlugin/cameraEvents$_textureId')
+        .receiveBroadcastStream()
+        .listen(_listener);
     _creatingCompleter.complete();
     return _creatingCompleter.future;
   }
@@ -359,10 +363,8 @@ class CameraController extends ValueNotifier<CameraValue> {
     } on PlatformException catch (e) {
       throw CameraException(e.code, e.message);
     }
-    const EventChannel cameraEventChannel =
-        EventChannel('plugins.flutter.io/camera/imageStream');
-    _imageStreamSubscription =
-        cameraEventChannel.receiveBroadcastStream().listen(
+    const EventChannel cameraEventChannel = EventChannel('plugins.flutter.io/camera/imageStream');
+    _imageStreamSubscription = cameraEventChannel.receiveBroadcastStream().listen(
       (dynamic imageData) {
         onAvailable(CameraImage._fromPlatformData(imageData));
       },
@@ -469,6 +471,24 @@ class CameraController extends ValueNotifier<CameraValue> {
       throw CameraException(e.code, e.message);
     }
   }
+
+  Future<void> turnOn({double intensity = 1.0}) async {
+    bool isSuccess = await _channel.invokeMethod('turnOn', {'intensity' : '$intensity'});
+    if (isSuccess) {
+      value = value.copyWith(isOpenLight: true);
+    } else {
+      value = value.copyWith(errorDescription: '闪光灯开启失败');
+    }
+  }
+  Future<void> turnOff() async {
+    bool isSuccess = await _channel.invokeMethod('turnOff');
+    if (isSuccess) {
+      value = value.copyWith(isOpenLight: false);
+    } else {
+      value = value.copyWith(errorDescription: '闪光灯关闭失败');
+    }
+  }
+  Future<bool> get hasLamp async => await _channel.invokeMethod('hasLamp');
 
   /// Releases the resources of this camera.
   @override
