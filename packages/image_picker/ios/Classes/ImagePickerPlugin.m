@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// pyright 2017 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -100,9 +100,91 @@ static const int SOURCE_GALLERY = 1;
                                    details:nil]);
         break;
     }
+  } else if ([@"getLatestImage" isEqualToString:call.method]) {
+  // 先检查权限，然后获得数据
+  _result = result;
+  _arguments = call.arguments;
+  AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+
+  switch (status) {
+    case AVAuthorizationStatusAuthorized:
+      [self getLatestAsset];
+      break;
+    case AVAuthorizationStatusNotDetermined: {
+      [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo
+                               completionHandler:^(BOOL granted) {
+                                 if (granted) {
+                                   dispatch_async(dispatch_get_main_queue(), ^{
+                                     if (granted) {
+                                       [self getLatestAsset];
+                                     }
+                                   });
+                                 } else {
+                                   dispatch_async(dispatch_get_main_queue(), ^{
+                                     [self errorNoAccess:AVAuthorizationStatusDenied];
+                                   });
+                                 }
+                               }];
+    }; break;
+    case AVAuthorizationStatusDenied:
+    case AVAuthorizationStatusRestricted:
+    default:
+      [self errorNoAccess:status];
+      break;
+  }
+
   } else {
     result(FlutterMethodNotImplemented);
   }
+}
+
+- (void)getLatestAsset {
+
+PHFetchOptions *options = [[PHFetchOptions alloc] init];
+
+PHFetchResult *assetsFetchResults = [PHAsset fetchAssetsWithOptions:options];
+
+PHAsset *phasset = [assetsFetchResults lastObject];
+
+PHCachingImageManager *imageManager = [[PHCachingImageManager alloc] init];
+
+[imageManager requestImageForAsset:phasset targetSize:CGSizeMake(60, 60) contentMode:PHImageContentModeAspectFill options:nil resultHandler:^(UIImage * _Nullable result, NSDictionary * _Nullable info) {
+    if (_result && result) {
+    UIImage *image = result;
+    if (image == nil) {
+        image = [info objectForKey:UIImagePickerControllerOriginalImage];
+    }
+    image = [self normalizedImage:image];
+    
+    NSNumber *maxWidth = [_arguments objectForKey:@"maxWidth"];
+    NSNumber *maxHeight = [_arguments objectForKey:@"maxHeight"];
+    
+    if (maxWidth != (id)[NSNull null] || maxHeight != (id)[NSNull null]) {
+        image = [self scaledImage:image maxWidth:maxWidth maxHeight:maxHeight];
+    }
+    
+    BOOL saveAsPNG = [self hasAlpha:image];
+    NSData *data =
+    saveAsPNG ? UIImagePNGRepresentation(image) : UIImageJPEGRepresentation(image, 1.0);
+    NSString *fileExtension = saveAsPNG ? @"image_picker_%@.png" : @"image_picker_%@.jpg";
+    NSString *guid = [[NSProcessInfo processInfo] globallyUniqueString];
+    NSString *tmpFile = [NSString stringWithFormat:fileExtension, guid];
+    NSString *tmpDirectory = NSTemporaryDirectory();
+    NSString *tmpPath = [tmpDirectory stringByAppendingPathComponent:tmpFile];
+    
+    if ([[NSFileManager defaultManager] createFileAtPath:tmpPath contents:data attributes:nil]) {
+        NSLog(@"tempPath: %@", tmpPath);
+        _result(tmpPath);
+    } else {
+        _result([FlutterError errorWithCode:@"create_error"
+                                    message:@"Temporary file could not be created"
+                                    details:nil]);
+    }
+                _result = nil;
+                _arguments = nil;
+    }
+}];
+
 }
 
 - (void)showCamera {

@@ -18,8 +18,7 @@ enum ImageSource {
 }
 
 class ImagePicker {
-  static const MethodChannel _channel =
-      MethodChannel('plugins.flutter.io/image_picker');
+  static const MethodChannel _channel = MethodChannel('plugins.flutter.io/image_picker');
 
   /// Returns a [File] object pointing to the image that was picked.
   ///
@@ -73,6 +72,15 @@ class ImagePicker {
         'source': source.index,
       },
     );
+    return path == null ? null : File(path);
+  }
+
+  /// 获取用户最后一张图片路径
+  static Future<File> getLatestImage({double maxWidth, double maxHeight}) async {
+    final String path = await _channel.invokeMethod('getLatestImage', <String, dynamic>{
+      'maxWidth': maxWidth,
+      'maxHeight': maxHeight,
+    });
     return path == null ? null : File(path);
   }
 }
