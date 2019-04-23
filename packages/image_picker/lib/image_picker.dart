@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -82,5 +83,24 @@ class ImagePicker {
       'maxHeight': maxHeight,
     });
     return path == null ? null : File(path);
+  }
+
+  static Future<String> saveFile(
+      {@required Uint8List fileData, String title, String description}) async {
+    assert(fileData != null);
+
+    String filePath = await _channel.invokeMethod(
+      'saveFile',
+      <String, dynamic>{'fileData': fileData, 'title': title, 'description': description},
+    );
+    debugPrint("saved filePath:" + filePath);
+    //process ios return filePath
+    if (filePath == null) {
+      return filePath;
+    }
+    if (filePath.startsWith("file://")) {
+      filePath = filePath.replaceAll("file://", "");
+    }
+    return filePath;
   }
 }

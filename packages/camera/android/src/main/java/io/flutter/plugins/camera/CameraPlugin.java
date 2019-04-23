@@ -31,6 +31,7 @@ import android.view.Surface;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
@@ -269,29 +270,16 @@ public class CameraPlugin implements MethodCallHandler {
     }
 
     private void turnOnOrOff(boolean isTurnOn, final Result result) {
+        boolean isSuccess = true;
+        camera.captureRequestBuilder.set(CaptureRequest.FLASH_MODE,
+                isTurnOn ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
         try {
-            String[] cameraNames = cameraManager.getCameraIdList();
-            for (String cameraName : cameraNames) {
-                HashMap<String, Object> details = new HashMap<>();
-                CameraCharacteristics characteristics =
-                        cameraManager.getCameraCharacteristics(cameraName);
-                details.put("name", cameraName);
-                @SuppressWarnings("ConstantConditions")
-                int sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
-                details.put("sensorOrientation", sensorOrientation);
-
-                int lensFacing = characteristics.get(CameraCharacteristics.LENS_FACING);
-                if (lensFacing == CameraMetadata.LENS_FACING_FRONT) {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        cameraManager.setTorchMode(cameraName, isTurnOn);
-                    }
-                    break;
-                }
-            }
-            result.success(true);
+            camera.cameraCaptureSession.setRepeatingRequest(camera.captureRequestBuilder.build(), null, null);
         } catch (CameraAccessException e) {
-            result.error(" 闪光灯有问题", e.getMessage(), null);
+            e.printStackTrace();
+            isSuccess = false;
         }
+        result.success(isSuccess);
     }
 
     private static class CompareSizesByArea implements Comparator<Size> {
@@ -787,6 +775,8 @@ public class CameraPlugin implements MethodCallHandler {
                                 cameraCaptureSession = session;
                                 captureRequestBuilder.set(
                                         CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+
+                                captureRequestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
                                 cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, null);
                             } catch (CameraAccessException | IllegalStateException | IllegalArgumentException e) {
                                 sendErrorEvent(e.getMessage());
