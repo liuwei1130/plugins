@@ -177,14 +177,13 @@ class CameraValue {
     bool isOpenLight,
   }) {
     return CameraValue(
-      isInitialized: isInitialized ?? this.isInitialized,
-      errorDescription: errorDescription,
-      previewSize: previewSize ?? this.previewSize,
-      isRecordingVideo: isRecordingVideo ?? this.isRecordingVideo,
-      isTakingPicture: isTakingPicture ?? this.isTakingPicture,
-      isStreamingImages: isStreamingImages ?? this.isStreamingImages,
-      isOpenLight: isOpenLight ?? this.isOpenLight
-    );
+        isInitialized: isInitialized ?? this.isInitialized,
+        errorDescription: errorDescription,
+        previewSize: previewSize ?? this.previewSize,
+        isRecordingVideo: isRecordingVideo ?? this.isRecordingVideo,
+        isTakingPicture: isTakingPicture ?? this.isTakingPicture,
+        isStreamingImages: isStreamingImages ?? this.isStreamingImages,
+        isOpenLight: isOpenLight ?? this.isOpenLight);
   }
 
   @override
@@ -298,7 +297,7 @@ class CameraController extends ValueNotifier<CameraValue> {
   /// The file can be read as this function returns.
   ///
   /// Throws a [CameraException] if the capture fails.
-  Future<void> takePicture(String path) async {
+  Future<void> takePicture(String path, {bool isHighResolutionPhoto}) async {
     if (!value.isInitialized || _isDisposed) {
       throw CameraException(
         'Uninitialized CameraController.',
@@ -315,7 +314,12 @@ class CameraController extends ValueNotifier<CameraValue> {
       value = value.copyWith(isTakingPicture: true);
       await _channel.invokeMethod<void>(
         'takePicture',
-        <String, dynamic>{'textureId': _textureId, 'path': path},
+        <String, dynamic>{
+          'textureId': _textureId,
+          'path': path,
+          'isHighResolutionPhoto':
+              isHighResolutionPhoto == null ? 'false' : '$isHighResolutionPhoto'
+        },
       );
       value = value.copyWith(isTakingPicture: false);
     } on PlatformException catch (e) {
@@ -473,13 +477,14 @@ class CameraController extends ValueNotifier<CameraValue> {
   }
 
   Future<void> turnOn({double intensity = 1.0}) async {
-    bool isSuccess = await _channel.invokeMethod('turnOn', {'intensity' : '$intensity'});
+    bool isSuccess = await _channel.invokeMethod('turnOn', {'intensity': '$intensity'});
     if (isSuccess) {
       value = value.copyWith(isOpenLight: true);
     } else {
       value = value.copyWith(errorDescription: '闪光灯开启失败');
     }
   }
+
   Future<void> turnOff() async {
     bool isSuccess = await _channel.invokeMethod('turnOff');
     if (isSuccess) {
@@ -488,6 +493,7 @@ class CameraController extends ValueNotifier<CameraValue> {
       value = value.copyWith(errorDescription: '闪光灯关闭失败');
     }
   }
+
   Future<bool> get hasLamp async => await _channel.invokeMethod('hasLamp');
 
   /// Releases the resources of this camera.

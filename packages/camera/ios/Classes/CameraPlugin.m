@@ -152,7 +152,7 @@ static FlutterError *getFlutterError(NSError *error) {
 - (void)stopVideoRecordingWithResult:(FlutterResult)result;
 - (void)startImageStreamWithMessenger:(NSObject<FlutterBinaryMessenger> *)messenger;
 - (void)stopImageStream;
-- (void)captureToFile:(NSString *)filename result:(FlutterResult)result;
+- (void)captureToFile:(NSString *)filename isHighResolutionPhoto:(BOOL)isHighResolutionPhoto result:(FlutterResult)result;
 @end
 
 @implementation FLTCam {
@@ -214,9 +214,12 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   [_captureSession stopRunning];
 }
 
-- (void)captureToFile:(NSString *)path result:(FlutterResult)result {
+- (void)captureToFile:(NSString *)path isHighResolutionPhoto:(BOOL)isHighResolutionPhoto result:(FlutterResult)result {
+    
   AVCapturePhotoSettings *settings = [AVCapturePhotoSettings photoSettings];
-  [settings setHighResolutionPhotoEnabled:YES];
+    if (isHighResolutionPhoto) {
+        [settings setHighResolutionPhotoEnabled:YES];
+    }
   [_capturePhotoOutput
       capturePhotoWithSettings:settings
                       delegate:[[FLTSavePhotoDelegate alloc] initWithPath:path
@@ -750,7 +753,7 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     NSUInteger textureId = ((NSNumber *)argsMap[@"textureId"]).unsignedIntegerValue;
 
     if ([@"takePicture" isEqualToString:call.method]) {
-      [_camera captureToFile:call.arguments[@"path"] result:result];
+        [_camera captureToFile:call.arguments[@"path"] isHighResolutionPhoto:[call.arguments[@"isHighResolutionPhoto"] isEqualToString:@"true"]  result:result];
     } else if ([@"dispose" isEqualToString:call.method]) {
       [_registry unregisterTexture:textureId];
       [_camera close];
