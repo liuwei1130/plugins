@@ -45,7 +45,7 @@ CameraLensDirection _parseCameraLensDirection(String string) {
 }
 
 /// 获取权限情况 true 允许， false 为不允许拒绝
-Future<bool> requestForAccess() {
+Future<bool> requestForCameraPermission() {
   return _channel.invokeMethod('requestForPermission');
 }
 
