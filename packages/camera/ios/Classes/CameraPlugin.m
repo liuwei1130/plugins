@@ -679,7 +679,22 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
 }
 
 - (void)handleMethodCallAsync:(FlutterMethodCall *)call result:(FlutterResult)result {
-  if ([@"availableCameras" isEqualToString:call.method]) {
+    if ([@"requestForPermission" isEqualToString:call.method]) {
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+        if (status == AVAuthorizationStatusRestricted || status == AVAuthorizationStatusDenied) {
+            result([NSNumber numberWithBool:NO]);
+        } else if (status == AVAuthorizationStatusAuthorized) {
+             result([NSNumber numberWithBool:YES]);
+        } else {
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+                dispatch_async(dispatch_get_main_queue(), ^{
+                        result(granted ? [NSNumber numberWithBool:YES] : nil);
+                });
+            }];
+        }
+    } else if ([@"toOpenPermission" isEqualToString:call.method]) {
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]];
+    } else if ([@"availableCameras" isEqualToString:call.method]) {
     AVCaptureDeviceDiscoverySession *discoverySession = [AVCaptureDeviceDiscoverySession
         discoverySessionWithDeviceTypes:@[ AVCaptureDeviceTypeBuiltInWideAngleCamera ]
                               mediaType:AVMediaTypeVideo

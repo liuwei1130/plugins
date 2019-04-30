@@ -44,6 +44,16 @@ CameraLensDirection _parseCameraLensDirection(String string) {
   throw ArgumentError('Unknown CameraLensDirection value');
 }
 
+/// 获取权限情况 true 允许， false 为不允许拒绝
+Future<bool> requestForAccess() {
+  return _channel.invokeMethod('requestForPermission');
+}
+
+/// 开启权限设置
+Future<void> toOpenAccess() {
+  return _channel.invokeMethod('toOpenPermission');
+}
+
 /// Completes with a list of available cameras.
 ///
 /// May throw a [CameraException].
