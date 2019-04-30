@@ -22,12 +22,12 @@ class ImagePicker {
   static const MethodChannel _channel = MethodChannel('plugins.flutter.io/image_picker');
 
   /// 获取权限情况 true 允许， false 为不允许拒绝
-  Future<bool> requestForPhonePermission() {
+  static Future<bool> requestForPhonePermission() {
     return _channel.invokeMethod('requestForPermission');
   }
 
   /// 开启权限设置
-  Future<void> toOpenAccess() {
+  static Future<void> toOpenAccess() {
     return _channel.invokeMethod('toOpenPermission');
   }
 
