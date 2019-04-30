@@ -21,6 +21,16 @@ enum ImageSource {
 class ImagePicker {
   static const MethodChannel _channel = MethodChannel('plugins.flutter.io/image_picker');
 
+  /// 获取权限情况 true 允许， false 为不允许拒绝
+  Future<bool> requestForPhonePermission() {
+    return _channel.invokeMethod('requestForPermission');
+  }
+
+  /// 开启权限设置
+  Future<void> toOpenAccess() {
+    return _channel.invokeMethod('toOpenPermission');
+  }
+
   /// Returns a [File] object pointing to the image that was picked.
   ///
   /// The [source] argument controls where the image comes from. This can

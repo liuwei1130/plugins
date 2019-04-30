@@ -49,8 +49,20 @@ static const int SOURCE_GALLERY = 1;
                                 details:nil]);
     _result = nil;
   }
-
-  if ([@"pickImage" isEqualToString:call.method]) {
+ if ([@"requestForPermission" isEqualToString:call.method]) {
+     PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
+        if (status == PHAuthorizationStatusRestricted || status == PHAuthorizationStatusDenied) {
+            result([NSNumber numberWithBool:NO]);
+        } else if (status == PHAuthorizationStatusAuthorized) {
+             result([NSNumber numberWithBool:YES]);
+        } else {
+            [PHPhotoLibrary requestAuthorization:^(PHAuthorizationStatus status) {
+                 result(status == PHAuthorizationStatusAuthorized ? [NSNumber numberWithBool:YES] : nil);
+            }];
+        }
+    } else if ([@"toOpenPermission" isEqualToString:call.method]) {
+        [[UIApplication sharedApplication] openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]];
+    } else if ([@"pickImage" isEqualToString:call.method]) {
     _imagePickerController.modalPresentationStyle = UIModalPresentationCurrentContext;
     _imagePickerController.delegate = self;
     _imagePickerController.mediaTypes = @[ (NSString *)kUTTypeImage ];
