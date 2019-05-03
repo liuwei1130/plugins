@@ -259,25 +259,19 @@ public class ImagePickerDelegate
     }
 
     public void getLatestPhoto(MethodCall methodCall, MethodChannel.Result result) {
-//        if (!setPendingMethodCallAndResult(methodCall, result)) {
-//            finishWithAlreadyActiveError(result);
-//            return;
-//        }
-//
-//        if (!permissionManager.isPermissionGranted(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-//            permissionManager.askForPermission(
-//                    Manifest.permission.READ_EXTERNAL_STORAGE, REQUEST_EXTERNAL_IMAGE_STORAGE_PERMISSION);
-//            return;
-//        }
-//        Pair<Long, String> pair = getLatestPhoto(activity);
-//        if (pair == null) {
-//            result.error("获得图片", "数据为空", null);
-//        } else {
-//            Log.d("ImagePickerDelegate", "获得图片数据: longId : " + pair.first + " , path : " + pair.second);
-//            result.success(pair.second);
-//        }
+        Pair<Long, String> pair = getLatestPhoto(activity);
+        if (pair == null) {
+            if (BuildConfig.DEBUG) {
+                Log.d("获得图片", "数据为空");
+            }
+            result.success(null);
+        } else {
+            if (BuildConfig.DEBUG) {
+                Log.d("ImagePickerDelegate", "获得图片数据: longId : " + pair.first + " , path : " + pair.second);
+            }
+            result.success(pair.second);
+        }
 
-        result.success(null);
     }
 
     public void saveImageToGallery(MethodCall methodCall, MethodChannel.Result result) throws IOException {
@@ -447,16 +441,20 @@ public class ImagePickerDelegate
         Pair<Long, String> cameraPair = null;
         Cursor cursor = null;
         try {
-            context.getContentResolver().query(MediaStore.Images.Thumbnails.EXTERNAL_CONTENT_URI,
+
+            cursor = MediaStore.Images.Thumbnails.query(context.getContentResolver(),
+                    MediaStore.Images.Thumbnails.EXTERNAL_CONTENT_URI,
+//                    MediaStore.Images.Thumbnails.MICRO_KIND,
                     new String[]{
                             MediaStore.Images.Thumbnails.IMAGE_ID,
                             MediaStore.Images.Thumbnails.DATA
-                    },
-                    null,
-                    null,
-                    MediaStore.Files.FileColumns.DATE_MODIFIED + " DESC");
-            if (cursor.moveToFirst()) {
-                cameraPair = new Pair(cursor.getLong(0), cursor.getString(1));
+                    }
+            );
+            if (cursor != null && cursor.moveToLast()) {
+                cameraPair = new Pair(cursor.getInt(0), cursor.getString(1));
+                if (BuildConfig.DEBUG) {
+                    Log.d("图片查询数据", "获得数据 : " + cameraPair.second);
+                }
             }
         } catch (Exception exception) {
             exception.printStackTrace();

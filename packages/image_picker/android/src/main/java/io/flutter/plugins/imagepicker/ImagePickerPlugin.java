@@ -4,6 +4,9 @@
 
 package io.flutter.plugins.imagepicker;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Environment;
 
 import androidx.annotation.VisibleForTesting;
@@ -17,6 +20,8 @@ import java.io.IOException;
 
 public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
     private static final String CHANNEL = "plugins.flutter.io/image_picker";
+
+    private static final int REQUEST_ID = 1001010;
 
     private static final int SOURCE_CAMERA = 0;
     private static final int SOURCE_GALLERY = 1;
@@ -53,12 +58,46 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
     }
 
     @Override
-    public void onMethodCall(MethodCall call, MethodChannel.Result result) {
+    public void onMethodCall(MethodCall call, final MethodChannel.Result result) {
         if (registrar.activity() == null) {
             result.error("no_activity", "image_picker plugin requires a foreground activity.", null);
             return;
         }
-        if (call.method.equals("pickImage")) {
+        if (call.method.equals("requestForPermission")) {
+            //API >=23
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                if (registrar.context().checkSelfPermission(
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        == PackageManager.PERMISSION_GRANTED &&
+                        registrar.context().checkSelfPermission(
+                                Manifest.permission.READ_EXTERNAL_STORAGE)
+                                == PackageManager.PERMISSION_GRANTED) {
+                    result.success(true);
+                } else {
+                    registrar.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
+                        @Override
+                        public boolean onRequestPermissionsResult(int id, String[] strings, int[] ints) {
+                            if (id == REQUEST_ID) {
+                                result.success(true);
+                                return true;
+                            }
+                            result.success(null);
+                            return false;
+                        }
+                    });
+                    registrar
+                            .activity()
+                            .requestPermissions(
+                                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                                            Manifest.permission.READ_EXTERNAL_STORAGE},
+                                    REQUEST_ID);
+                }
+
+            } else {
+                result.success(true);
+            }
+
+        } else if (call.method.equals("pickImage")) {
             int imageSource = call.argument("source");
             switch (imageSource) {
                 case SOURCE_GALLERY:

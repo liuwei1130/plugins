@@ -161,6 +161,37 @@ public class CameraPlugin implements MethodCallHandler {
     @Override
     public void onMethodCall(MethodCall call, final Result result) {
         switch (call.method) {
+            case "requestForPermission":
+                //API >=23
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (activity.checkSelfPermission(Manifest.permission.CAMERA)
+                            == PackageManager.PERMISSION_GRANTED) {
+                        result.success(true);
+                    } else {
+                        registrar.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
+                            @Override
+                            public boolean onRequestPermissionsResult(int id, String[] strings, int[] ints) {
+                                if (id == CAMERA_REQUEST_ID) {
+                                    result.success(true);
+                                    return true;
+                                }
+                                result.success(null);
+                                return false;
+                            }
+                        });
+                        registrar
+                                .activity()
+                                .requestPermissions(
+                                        new String[]{Manifest.permission.CAMERA,
+                                                Manifest.permission.RECORD_AUDIO},
+                                        CAMERA_REQUEST_ID);
+
+                    }
+
+                } else {
+                    result.success(true);
+                }
+                break;
             case "availableCameras":
                 try {
                     String[] cameraNames = cameraManager.getCameraIdList();
