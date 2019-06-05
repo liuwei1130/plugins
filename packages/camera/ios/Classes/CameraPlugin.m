@@ -140,6 +140,7 @@ static FlutterError *getFlutterError(NSError *error) {
 @property(assign, nonatomic) BOOL isRecording;
 @property(assign, nonatomic) BOOL isAudioSetup;
 @property(assign, nonatomic) BOOL isStreamingImages;
+@property(assign, nonatomic) BOOL isCanStreamingImages;
 @property(nonatomic) CMMotionManager *motionManager;
 - (instancetype)initWithCameraName:(NSString *)cameraName
                   resolutionPreset:(NSString *)resolutionPreset
@@ -306,15 +307,13 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     return;
   }
   if (_isStreamingImages) {
-    if (_imageStreamHandler.eventSink) {
+    if (_imageStreamHandler.eventSink && _isCanStreamingImages) {
+        _isCanStreamingImages = NO;
       CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
       CVPixelBufferLockBaseAddress(pixelBuffer, kCVPixelBufferLock_ReadOnly);
-
       size_t imageWidth = CVPixelBufferGetWidth(pixelBuffer);
       size_t imageHeight = CVPixelBufferGetHeight(pixelBuffer);
-
       NSMutableArray *planes = [NSMutableArray array];
-
       const Boolean isPlanar = CVPixelBufferIsPlanar(pixelBuffer);
       size_t planeCount;
       if (isPlanar) {
@@ -322,7 +321,6 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
       } else {
         planeCount = 1;
       }
-
       for (int i = 0; i < planeCount; i++) {
         void *planeAddress;
         size_t bytesPerRow;
@@ -501,6 +499,11 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
   }
 }
 
+- (void)setCanStartImageStream {
+    NSLog(@"setCanStartImageStream");
+    _isCanStreamingImages = YES;
+}
+
 - (void)startImageStreamWithMessenger:(NSObject<FlutterBinaryMessenger> *)messenger {
   if (!_isStreamingImages) {
     FlutterEventChannel *eventChannel =
@@ -511,6 +514,7 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     [eventChannel setStreamHandler:_imageStreamHandler];
 
     _isStreamingImages = YES;
+    _isCanStreamingImages = YES;
   } else {
     _eventSink(
         @{@"event" : @"error", @"errorDescription" : @"Images from camera are already streaming!"});
@@ -762,6 +766,9 @@ FourCharCode const videoFormat = kCVPixelFormatType_32BGRA;
     result(nil);
   } else if ([@"stopImageStream" isEqualToString:call.method]) {
     [_camera stopImageStream];
+    result(nil);
+  } else if ([@"setCanStartImageStream" isEqualToString:call.method]) {
+    [_camera setCanStartImageStream];
     result(nil);
   } else {
     NSDictionary *argsMap = call.arguments;

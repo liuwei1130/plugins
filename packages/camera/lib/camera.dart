@@ -338,6 +338,10 @@ class CameraController extends ValueNotifier<CameraValue> {
     }
   }
 
+  Future<void> setCanStartImageStream() async {
+    await _channel.invokeMethod<void>('setCanStartImageStream');
+  }
+
   /// Start streaming images from platform camera.
   ///
   /// Settings for capturing images on iOS and Android is set to always use the

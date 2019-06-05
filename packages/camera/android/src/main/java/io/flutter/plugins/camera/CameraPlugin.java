@@ -7,6 +7,7 @@ import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.ImageFormat;
 import android.graphics.Point;
 import android.graphics.SurfaceTexture;
@@ -24,9 +25,9 @@ import android.media.ImageReader;
 import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.Bundle;
+import android.util.Log;
 import android.util.Size;
 import android.view.Display;
-import android.view.OrientationEventListener;
 import android.view.Surface;
 
 import androidx.annotation.NonNull;
@@ -56,6 +57,7 @@ import java.util.Map;
 public class CameraPlugin implements MethodCallHandler {
 
     private static final int CAMERA_REQUEST_ID = 513469796;
+    private static final int CAMERA_REQUEST_ID2 = 1000;
     private static final String TAG = "CameraPlugin";
 
     private static CameraManager cameraManager;
@@ -67,7 +69,6 @@ public class CameraPlugin implements MethodCallHandler {
     // The code to run after requesting camera permissions.
     private Runnable cameraPermissionContinuation;
     private boolean requestingPermission;
-    private final OrientationEventListener orientationEventListener;
     private int currentOrientation = ORIENTATION_UNKNOWN;
 
     private CameraPlugin(Registrar registrar, FlutterView view, Activity activity) {
@@ -75,17 +76,6 @@ public class CameraPlugin implements MethodCallHandler {
         this.view = view;
         this.activity = activity;
 
-        orientationEventListener =
-                new OrientationEventListener(activity.getApplicationContext()) {
-                    @Override
-                    public void onOrientationChanged(int i) {
-                        if (i == ORIENTATION_UNKNOWN) {
-                            return;
-                        }
-                        // Convert the raw deg angle to the nearest multiple of 90.
-                        currentOrientation = (int) Math.round(i / 90.0) * 90;
-                    }
-                };
 
         registrar.addRequestPermissionsResultListener(new CameraRequestPermissionsListener());
 
@@ -108,7 +98,6 @@ public class CameraPlugin implements MethodCallHandler {
                         if (activity != CameraPlugin.this.activity) {
                             return;
                         }
-                        orientationEventListener.enable();
                         if (camera != null && !wasRequestingPermission) {
                             camera.open(null);
                         }
@@ -117,7 +106,6 @@ public class CameraPlugin implements MethodCallHandler {
                     @Override
                     public void onActivityPaused(Activity activity) {
                         if (activity == CameraPlugin.this.activity) {
-                            orientationEventListener.disable();
                             if (camera != null) {
                                 camera.close();
                             }
@@ -171,11 +159,28 @@ public class CameraPlugin implements MethodCallHandler {
                         registrar.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
                             @Override
                             public boolean onRequestPermissionsResult(int id, String[] strings, int[] ints) {
-                                if (id == CAMERA_REQUEST_ID) {
-                                    result.success(true);
+                                if (BuildConfig.DEBUG) {
+                                    Log.d(TAG, "id : " + id);
+                                    for (String string : strings) {
+                                        Log.d(TAG, " Strings : " + string);
+                                    }
+
+                                    for (int intTemp : ints) {
+                                        Log.d(TAG, "int :" + intTemp);
+                                    }
+                                }
+                                if (id == CAMERA_REQUEST_ID2) {
+
+                                    int count = strings == null ? 0 : strings.length;
+                                    for (int i = 0; i < count; ++i) {
+                                        String permissionName = strings[i];
+                                        int temp = ints[i];
+                                        if (permissionName.equals(Manifest.permission.CAMERA)) {
+                                            result.success(temp == PackageManager.PERMISSION_GRANTED);
+                                        }
+                                    }
                                     return true;
                                 }
-                                result.success(null);
                                 return false;
                             }
                         });
@@ -184,7 +189,7 @@ public class CameraPlugin implements MethodCallHandler {
                                 .requestPermissions(
                                         new String[]{Manifest.permission.CAMERA,
                                                 Manifest.permission.RECORD_AUDIO},
-                                        CAMERA_REQUEST_ID);
+                                        CAMERA_REQUEST_ID2);
 
                     }
 
@@ -234,7 +239,6 @@ public class CameraPlugin implements MethodCallHandler {
                 this.activity
                         .getApplication()
                         .registerActivityLifecycleCallbacks(this.activityLifecycleCallbacks);
-                orientationEventListener.enable();
                 break;
             }
             case "takePicture": {
@@ -302,6 +306,11 @@ public class CameraPlugin implements MethodCallHandler {
 
     private void turnOnOrOff(boolean isTurnOn, final Result result) {
         boolean isSuccess = true;
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "turnOnOrOff : " + isTurnOn);
+        }
+        camera.captureRequestBuilder.set(CaptureRequest.CONTROL_AE_MODE,
+                isTurnOn ? CaptureRequest.CONTROL_AE_MODE_ON : CaptureRequest.CONTROL_AE_MODE_OFF);
         camera.captureRequestBuilder.set(CaptureRequest.FLASH_MODE,
                 isTurnOn ? CaptureRequest.FLASH_MODE_TORCH : CaptureRequest.FLASH_MODE_OFF);
         try {
@@ -327,7 +336,9 @@ public class CameraPlugin implements MethodCallHandler {
         @Override
         public boolean onRequestPermissionsResult(int id, String[] permissions, int[] grantResults) {
             if (id == CAMERA_REQUEST_ID) {
-                cameraPermissionContinuation.run();
+                if (cameraPermissionContinuation != null) {
+                    cameraPermissionContinuation.run();
+                }
                 return true;
             }
             return false;
@@ -384,6 +395,14 @@ public class CameraPlugin implements MethodCallHandler {
                         characteristics.get(CameraCharacteristics.LENS_FACING)
                                 == CameraMetadata.LENS_FACING_FRONT;
                 computeBestCaptureSize(streamConfigurationMap);
+
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "sensorOrientation : " + sensorOrientation
+                            + ", isFrontFacing : " + isFrontFacing
+                            + ", minHeight : " + minHeight
+                            + ", captureSize : " + captureSize.toString());
+                }
+
                 computeBestPreviewAndRecordingSize(streamConfigurationMap, minHeight, captureSize);
 
                 if (cameraPermissionContinuation != null) {
@@ -468,13 +487,24 @@ public class CameraPlugin implements MethodCallHandler {
             final boolean swapWH = getMediaOrientation() % 180 == 90;
             int screenWidth = swapWH ? screenResolution.y : screenResolution.x;
             int screenHeight = swapWH ? screenResolution.x : screenResolution.y;
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "computeBestPreviewAndRecordingSize screenWidth: " + screenWidth + ", screenHeight : " + screenHeight);
+            }
 
             List<Size> goodEnough = new ArrayList<>();
             for (Size s : sizes) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "computeBestPreviewAndRecordingSize : " + s.toString());
+                }
+
                 if (minHeight <= s.getHeight()
                         && s.getWidth() <= screenWidth
                         && s.getHeight() <= screenHeight
                         && s.getHeight() <= 1080) {
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "computeBestPreviewAndRecordingSize goodEnough: " + s.toString());
+                    }
+
                     goodEnough.add(s);
                 }
             }
@@ -487,10 +517,24 @@ public class CameraPlugin implements MethodCallHandler {
             } else {
                 float captureSizeRatio = (float) captureSize.getWidth() / captureSize.getHeight();
 
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "computeBestPreviewAndRecordingSize "
+                            + "captureSize.getWidth(): " + captureSize.getWidth()
+                            + ", captureSize.getHeight() : " + captureSize.getHeight()
+                            + ", captureSizeRatio : " + captureSizeRatio
+                            + ", goodEnough.get(0) : " + goodEnough.get(0)
+                    );
+                }
+
                 previewSize = goodEnough.get(0);
                 for (Size s : goodEnough) {
                     if ((float) s.getWidth() / s.getHeight() == captureSizeRatio) {
                         previewSize = s;
+                        if (BuildConfig.DEBUG) {
+                            Log.d(TAG, "computeBestPreviewAndRecordingSize "
+                                    + "previewSize : " + previewSize
+                            );
+                        }
                         break;
                     }
                 }
@@ -536,8 +580,9 @@ public class CameraPlugin implements MethodCallHandler {
 
         private void open(@Nullable final Result result) {
             if (!hasCameraPermission()) {
-                if (result != null)
+                if (result != null) {
                     result.error("cameraPermission", "Camera permission not granted", null);
+                }
             } else {
                 try {
                     pictureImageReader =
@@ -557,8 +602,9 @@ public class CameraPlugin implements MethodCallHandler {
                                     try {
                                         startPreview();
                                     } catch (CameraAccessException e) {
-                                        if (result != null)
+                                        if (result != null) {
                                             result.error("CameraAccess", e.getMessage(), null);
+                                        }
                                         cameraDevice.close();
                                         Camera.this.cameraDevice = null;
                                         return;
@@ -620,7 +666,9 @@ public class CameraPlugin implements MethodCallHandler {
                             },
                             null);
                 } catch (CameraAccessException e) {
-                    if (result != null) result.error("cameraAccess", e.getMessage(), null);
+                    if (result != null) {
+                        result.error("cameraAccess", e.getMessage(), null);
+                    }
                 }
             }
         }
@@ -806,8 +854,8 @@ public class CameraPlugin implements MethodCallHandler {
                                 cameraCaptureSession = session;
                                 captureRequestBuilder.set(
                                         CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
-
-                                captureRequestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
+////
+//                                captureRequestBuilder.set(CaptureRequest.FLASH_MODE, CaptureRequest.FLASH_MODE_TORCH);
                                 cameraCaptureSession.setRepeatingRequest(captureRequestBuilder.build(), null, null);
                             } catch (CameraAccessException | IllegalStateException | IllegalArgumentException e) {
                                 sendErrorEvent(e.getMessage());
@@ -882,7 +930,9 @@ public class CameraPlugin implements MethodCallHandler {
 
                         @Override
                         public void onCancel(Object o) {
-                            imageStreamReader.setOnImageAvailableListener(null, null);
+                            if (imageStreamReader != null) {
+                                imageStreamReader.setOnImageAvailableListener(null, null);
+                            }
                         }
                     });
         }
@@ -893,7 +943,9 @@ public class CameraPlugin implements MethodCallHandler {
                         @Override
                         public void onImageAvailable(final ImageReader reader) {
                             Image img = reader.acquireLatestImage();
-                            if (img == null) return;
+                            if (img == null) {
+                                return;
+                            }
 
                             List<Map<String, Object>> planes = new ArrayList<>();
                             for (Image.Plane plane : img.getPlanes()) {
@@ -906,7 +958,8 @@ public class CameraPlugin implements MethodCallHandler {
                                 planeBuffer.put("bytesPerRow", plane.getRowStride());
                                 planeBuffer.put("bytesPerPixel", plane.getPixelStride());
                                 planeBuffer.put("bytes", bytes);
-
+                                planeBuffer.put("width", img.getWidth());
+                                planeBuffer.put("height", img.getHeight());
                                 planes.add(planeBuffer);
                             }
 
@@ -915,6 +968,14 @@ public class CameraPlugin implements MethodCallHandler {
                             imageBuffer.put("height", img.getHeight());
                             imageBuffer.put("format", img.getFormat());
                             imageBuffer.put("planes", planes);
+
+//                            if(BuildConfig.DEBUG) {
+//                                Log.d(TAG, "width : " + imageBuffer.get("width"));
+//                                Log.d(TAG, "height : " + imageBuffer.get("height"));
+//                                Log.d(TAG, "format : " + imageBuffer.get("format"));
+//                                Log.d(TAG, "planes length: " + (planes == null ? 0 : planes.size()));
+//                                Log.d(TAG, "planes : " + (planes == null ? "null" : imageBuffer.get("planes")));
+//                            }
 
                             eventSink.success(imageBuffer);
                             img.close();
