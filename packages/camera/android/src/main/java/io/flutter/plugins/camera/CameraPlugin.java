@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
 import android.graphics.Point;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
@@ -262,6 +263,7 @@ public class CameraPlugin implements MethodCallHandler {
             case "startImageStream": {
                 try {
                     camera.startPreviewWithImageStream();
+                    camera.mIsCanStartImageStream = true;
                     result.success(null);
                 } catch (CameraAccessException e) {
                     result.error("CameraAccess", e.getMessage(), null);
@@ -277,6 +279,10 @@ public class CameraPlugin implements MethodCallHandler {
                 }
                 break;
             }
+            case "setCanStartImageStream":
+                camera.mIsCanStartImageStream = true;
+                result.success(null);
+                break;
             case "dispose": {
                 if (camera != null) {
                     camera.dispose();
@@ -361,6 +367,7 @@ public class CameraPlugin implements MethodCallHandler {
         private Size videoSize;
         private MediaRecorder mediaRecorder;
         private boolean recordingVideo;
+        private boolean mIsCanStartImageStream;
 
         Camera(final String cameraName, final String resolutionPreset, @NonNull final Result result) {
 
@@ -937,6 +944,53 @@ public class CameraPlugin implements MethodCallHandler {
                     });
         }
 
+        private byte[] NV21toRGBA(byte[] data, int width, int height) {
+            int size = width * height;
+            byte[] bytes = new byte[size * 4];
+            int y, u, v;
+            int r, g, b;
+            int index;
+            for (int i = 0; i < height; i++) {
+                for (int j = 0; j < width; j++) {
+                    index = j % 2 == 0 ? j : j - 1;
+
+                    y = data[width * i + j] & 0xff;
+                    u = data[width * height + width * (i / 2) + index + 1] & 0xff;
+                    v = data[width * height + width * (i / 2) + index] & 0xff;
+
+                    r = y + (int) 1.370705f * (v - 128);
+                    g = y - (int) (0.698001f * (v - 128) + 0.337633f * (u - 128));
+                    b = y + (int) 1.732446f * (u - 128);
+
+                    r = r < 0 ? 0 : (r > 255 ? 255 : r);
+                    g = g < 0 ? 0 : (g > 255 ? 255 : g);
+                    b = b < 0 ? 0 : (b > 255 ? 255 : b);
+
+                    bytes[width * i * 4 + j * 4 + 0] = (byte) r;
+                    bytes[width * i * 4 + j * 4 + 1] = (byte) g;
+                    bytes[width * i * 4 + j * 4 + 2] = (byte) b;
+                    bytes[width * i * 4 + j * 4 + 3] = (byte) 255;//透明度
+                }
+            }
+            return bytes;
+        }
+
+        private byte[] sortBytesRotate90(byte[] dataRGBABytes, int width, int height) {
+            byte[] bytes = new byte[dataRGBABytes.length];
+            for (int i = 0; i < height; ++i) {
+                for (int j = 0; j < width; ++j) {
+                    // 这个是一个rgba 数据
+                    int newIndex = ((width - j) * height - 1 - i) * 4 ;
+                    int oldIndex = (width - j - 1 + i * width) * 4  ;
+                    bytes[newIndex] = dataRGBABytes[oldIndex];
+                    bytes[newIndex + 1] = dataRGBABytes[oldIndex + 1];
+                    bytes[newIndex + 2] = dataRGBABytes[oldIndex + 2];
+                    bytes[newIndex + 3] = dataRGBABytes[oldIndex + 3];
+                }
+            }
+            return bytes;
+        }
+
         private void setImageStreamImageAvailableListener(final EventChannel.EventSink eventSink) {
             imageStreamReader.setOnImageAvailableListener(
                     new ImageReader.OnImageAvailableListener() {
@@ -947,27 +1001,52 @@ public class CameraPlugin implements MethodCallHandler {
                                 return;
                             }
 
-                            List<Map<String, Object>> planes = new ArrayList<>();
-                            for (Image.Plane plane : img.getPlanes()) {
-                                ByteBuffer buffer = plane.getBuffer();
+                            if (mIsCanStartImageStream) {
+                                mIsCanStartImageStream = false;
 
-                                byte[] bytes = new byte[buffer.remaining()];
-                                buffer.get(bytes, 0, bytes.length);
+                                List<Map<String, Object>> planes = new ArrayList<>();
 
+                                ByteBuffer Y = img.getPlanes()[0].getBuffer();
+                                ByteBuffer U = img.getPlanes()[1].getBuffer();
+                                ByteBuffer V = img.getPlanes()[2].getBuffer();
+
+                                int Yb = Y.remaining();
+                                int Ub = U.remaining();
+                                int Vb = V.remaining();
+
+                                byte[] data = new byte[Yb + Ub + Vb];
+
+                                Y.get(data, 0, Yb);
+                                V.get(data, Yb, Vb);
+                                U.get(data, Yb + Vb, Ub);
+                                byte[] bytes = NV21toRGBA(data, img.getWidth(), img.getHeight());
                                 Map<String, Object> planeBuffer = new HashMap<>();
-                                planeBuffer.put("bytesPerRow", plane.getRowStride());
-                                planeBuffer.put("bytesPerPixel", plane.getPixelStride());
-                                planeBuffer.put("bytes", bytes);
-                                planeBuffer.put("width", img.getWidth());
-                                planeBuffer.put("height", img.getHeight());
-                                planes.add(planeBuffer);
-                            }
+                                boolean isRotate = img.getWidth() > img.getHeight();
+                                if (isRotate) {
+                                    bytes = sortBytesRotate90(bytes, img.getWidth(), img.getHeight());
+                                }
 
-                            Map<String, Object> imageBuffer = new HashMap<>();
-                            imageBuffer.put("width", img.getWidth());
-                            imageBuffer.put("height", img.getHeight());
-                            imageBuffer.put("format", img.getFormat());
-                            imageBuffer.put("planes", planes);
+                                planeBuffer.put("bytes", bytes);
+                                planes.add(planeBuffer);
+
+//                                for (Image.Plane plane : img.getPlanes()) {
+//                                    ByteBuffer buffer = plane.getBuffer();
+//
+//                                    byte[] bytes = new byte[buffer.remaining()];
+//                                    buffer.get(bytes, 0, bytes.length);
+//
+//                                    Map<String, Object> planeBuffer = new HashMap<>();
+//                                    planeBuffer.put("bytesPerRow", plane.getRowStride());
+//                                    planeBuffer.put("bytesPerPixel", plane.getPixelStride());
+//                                    planeBuffer.put("bytes", bytes);
+//                                    planes.add(planeBuffer);
+//                                }
+
+                                Map<String, Object> imageBuffer = new HashMap<>();
+                                imageBuffer.put("width", isRotate ? img.getHeight() : img.getWidth());
+                                imageBuffer.put("height", isRotate ? img.getWidth() : img.getHeight());
+                                imageBuffer.put("format", img.getFormat());
+                                imageBuffer.put("planes", planes);
 
 //                            if(BuildConfig.DEBUG) {
 //                                Log.d(TAG, "width : " + imageBuffer.get("width"));
@@ -977,7 +1056,8 @@ public class CameraPlugin implements MethodCallHandler {
 //                                Log.d(TAG, "planes : " + (planes == null ? "null" : imageBuffer.get("planes")));
 //                            }
 
-                            eventSink.success(imageBuffer);
+                                eventSink.success(imageBuffer);
+                            }
                             img.close();
                         }
                     },
