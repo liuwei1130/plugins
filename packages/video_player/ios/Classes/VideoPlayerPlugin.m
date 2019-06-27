@@ -288,6 +288,10 @@ static inline CGFloat radiansToDegrees(CGFloat radians) {
     return;
   }
   if (_isPlaying) {
+    AVAudioSession* session = [AVAudioSession sharedInstance];
+    if ([session category] != AVAudioSessionCategoryPlayback) {
+      [session setCategory:AVAudioSessionCategoryPlayback error:nil];
+    }
     [_player play];
   } else {
     [_player pause];
