@@ -96,12 +96,20 @@ class ImagePicker {
   }
 
   static Future<String> saveFile(
-      {@required Uint8List fileData, String title, String description}) async {
+      {@required Uint8List fileData,
+      @required String name,
+      String mimeType = 'image/*',
+      String description}) async {
     assert(fileData != null);
 
     String filePath = await _channel.invokeMethod(
       'saveFile',
-      <String, dynamic>{'fileData': fileData, 'title': title, 'description': description},
+      <String, dynamic>{
+        'fileData': fileData,
+        'title': name,
+        'description': description,
+        'mimeType': mimeType
+      },
     );
     debugPrint("saved filePath:" + filePath);
     //process ios return filePath
