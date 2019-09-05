@@ -113,6 +113,7 @@ public class CameraPlugin implements MethodCallHandler {
         this.activity = activity;
 
         registrar.addRequestPermissionsResultListener(new CameraRequestPermissionsListener());
+        registrar.addRequestPermissionsResultListener(mRequestPermissionsListener);
 
         this.activityLifecycleCallbacks = new Application.ActivityLifecycleCallbacks() {
             @Override
@@ -188,7 +189,6 @@ public class CameraPlugin implements MethodCallHandler {
                         result.success(true);
                     } else {
                         mRequestPermissionsListener.setPendingResult(result);
-                        registrar.addRequestPermissionsResultListener(mRequestPermissionsListener);
                         registrar.activity().requestPermissions(
                                 new String[] {Manifest.permission.CAMERA,
                                         Manifest.permission.RECORD_AUDIO},
