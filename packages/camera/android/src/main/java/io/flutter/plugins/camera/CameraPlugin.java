@@ -275,7 +275,7 @@ public class CameraPlugin implements MethodCallHandler {
                 try {
                     camera.startPreview();
                     result.success(null);
-                } catch (CameraAccessException e) {
+                } catch (NullPointerException | CameraAccessException e) {
                     result.error("CameraAccess", e.getMessage(), null);
                 }
                 break;
@@ -603,7 +603,7 @@ public class CameraPlugin implements MethodCallHandler {
                             Camera.this.cameraDevice = cameraDevice;
                             try {
                                 startPreview();
-                            } catch (CameraAccessException e) {
+                            } catch (NullPointerException | CameraAccessException e) {
                                 if (result != null) {
                                     result.error("CameraAccess", e.getMessage(), null);
                                 }
@@ -820,12 +820,12 @@ public class CameraPlugin implements MethodCallHandler {
                 mediaRecorder.reset();
                 startPreview();
                 result.success(null);
-            } catch (CameraAccessException | IllegalStateException e) {
+            } catch (NullPointerException | CameraAccessException | IllegalStateException e) {
                 result.error("videoRecordingFailed", e.getMessage(), null);
             }
         }
 
-        private void startPreview() throws CameraAccessException {
+        private void startPreview() throws CameraAccessException, NullPointerException {
             closeCaptureSession();
 
             SurfaceTexture surfaceTexture = textureEntry.surfaceTexture();
