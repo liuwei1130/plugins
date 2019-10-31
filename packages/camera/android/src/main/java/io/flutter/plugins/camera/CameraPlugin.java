@@ -984,6 +984,22 @@ public class CameraPlugin implements MethodCallHandler {
             return bytes;
         }
 
+        private byte[] sortBytesRotate270(byte[] dataRGBABytes, int width, int height) {
+            byte[] bytes = new byte[dataRGBABytes.length];
+            for (int i = 0; i < height; ++i) {
+                for (int j = 0; j < width; ++j) {
+                    // 这个是一个rgba 数据
+                    int newIndex = (height - 1 - i + j * height) * 4;
+                    int oldIndex = (width - j - 1 + (height - 1 - i) * width) * 4;
+                    bytes[newIndex] = dataRGBABytes[oldIndex];
+                    bytes[newIndex + 1] = dataRGBABytes[oldIndex + 1];
+                    bytes[newIndex + 2] = dataRGBABytes[oldIndex + 2];
+                    bytes[newIndex + 3] = dataRGBABytes[oldIndex + 3];
+                }
+            }
+            return bytes;
+        }
+
         private void setImageStreamImageAvailableListener(final EventChannel.EventSink eventSink) {
             imageStreamReader.setOnImageAvailableListener(
                     new ImageReader.OnImageAvailableListener() {
@@ -1015,9 +1031,17 @@ public class CameraPlugin implements MethodCallHandler {
                                 byte[] bytes = NV21toRGBA(data, img.getWidth(), img.getHeight());
                                 Map<String, Object> planeBuffer = new HashMap<>();
                                 boolean isRotate = img.getWidth() > img.getHeight();
+                                if (BuildConfig.DEBUG) {
+                                    Log.d(TAG, "get image isRotate : " + isRotate);
+                                }
                                 if (isRotate) {
-                                    bytes = sortBytesRotate90(
-                                            bytes, img.getWidth(), img.getHeight());
+                                    if (getMediaOrientation() == 270) {
+                                        bytes = sortBytesRotate270(
+                                                bytes, img.getWidth(), img.getHeight());
+                                    } else {
+                                        bytes = sortBytesRotate90(
+                                                bytes, img.getWidth(), img.getHeight());
+                                    }
                                 }
 
                                 planeBuffer.put("bytes", bytes);
@@ -1122,7 +1146,11 @@ public class CameraPlugin implements MethodCallHandler {
             final int sensorOrientationOffset = (currentOrientation == ORIENTATION_UNKNOWN)
                     ? 0
                     : (isFrontFacing) ? -currentOrientation : currentOrientation;
-            return (sensorOrientationOffset + sensorOrientation + 360) % 360;
+            int value = (sensorOrientationOffset + sensorOrientation + 360) % 360;
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "getMediaOrientation : " + value);
+            }
+            return value;
         }
     }
 }
