@@ -8,14 +8,15 @@ part of 'purchase_wrapper.dart';
 
 PurchaseWrapper _$PurchaseWrapperFromJson(Map json) {
   return PurchaseWrapper(
-      orderId: json['orderId'] as String,
-      packageName: json['packageName'] as String,
-      purchaseTime: json['purchaseTime'] as int,
-      purchaseToken: json['purchaseToken'] as String,
-      signature: json['signature'] as String,
-      sku: json['sku'] as String,
-      isAutoRenewing: json['isAutoRenewing'] as bool,
-      originalJson: json['originalJson'] as String);
+    orderId: json['orderId'] as String,
+    packageName: json['packageName'] as String,
+    purchaseTime: json['purchaseTime'] as int,
+    purchaseToken: json['purchaseToken'] as String,
+    signature: json['signature'] as String,
+    sku: json['sku'] as String,
+    isAutoRenewing: json['isAutoRenewing'] as bool,
+    originalJson: json['originalJson'] as String,
+  );
 }
 
 Map<String, dynamic> _$PurchaseWrapperToJson(PurchaseWrapper instance) =>
@@ -27,39 +28,47 @@ Map<String, dynamic> _$PurchaseWrapperToJson(PurchaseWrapper instance) =>
       'signature': instance.signature,
       'sku': instance.sku,
       'isAutoRenewing': instance.isAutoRenewing,
-      'originalJson': instance.originalJson
+      'originalJson': instance.originalJson,
     };
 
 PurchasesResultWrapper _$PurchasesResultWrapperFromJson(Map json) {
   return PurchasesResultWrapper(
-      responseCode:
-          _$enumDecode(_$BillingResponseEnumMap, json['responseCode']),
-      purchasesList: (json['purchasesList'] as List)
-          .map((e) => PurchaseWrapper.fromJson(e as Map))
-          .toList());
+    responseCode: _$enumDecode(_$BillingResponseEnumMap, json['responseCode']),
+    purchasesList: (json['purchasesList'] as List)
+        .map((e) => PurchaseWrapper.fromJson(e as Map))
+        .toList(),
+  );
 }
 
 Map<String, dynamic> _$PurchasesResultWrapperToJson(
         PurchasesResultWrapper instance) =>
     <String, dynamic>{
       'responseCode': _$BillingResponseEnumMap[instance.responseCode],
-      'purchasesList': instance.purchasesList
+      'purchasesList': instance.purchasesList,
     };
 
-T _$enumDecode<T>(Map<T, dynamic> enumValues, dynamic source) {
+T _$enumDecode<T>(
+  Map<T, dynamic> enumValues,
+  dynamic source, {
+  T unknownValue,
+}) {
   if (source == null) {
     throw ArgumentError('A value must be provided. Supported values: '
         '${enumValues.values.join(', ')}');
   }
-  return enumValues.entries
-      .singleWhere((e) => e.value == source,
-          orElse: () => throw ArgumentError(
-              '`$source` is not one of the supported values: '
-              '${enumValues.values.join(', ')}'))
-      .key;
+
+  final value = enumValues.entries
+      .singleWhere((e) => e.value == source, orElse: () => null)
+      ?.key;
+
+  if (value == null && unknownValue == null) {
+    throw ArgumentError('`$source` is not one of the supported values: '
+        '${enumValues.values.join(', ')}');
+  }
+  return value ?? unknownValue;
 }
 
-const _$BillingResponseEnumMap = <BillingResponse, dynamic>{
+const _$BillingResponseEnumMap = {
   BillingResponse.featureNotSupported: -2,
   BillingResponse.serviceDisconnected: -1,
   BillingResponse.ok: 0,
@@ -70,5 +79,5 @@ const _$BillingResponseEnumMap = <BillingResponse, dynamic>{
   BillingResponse.developerError: 5,
   BillingResponse.error: 6,
   BillingResponse.itemAlreadyOwned: 7,
-  BillingResponse.itemNotOwned: 8
+  BillingResponse.itemNotOwned: 8,
 };

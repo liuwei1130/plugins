@@ -1,13 +1,18 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2019 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 package io.flutter.plugins.imagepicker;
 
 import android.Manifest;
+import android.app.Activity;
+import android.app.Application;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 
 import androidx.annotation.VisibleForTesting;
 
@@ -19,15 +24,27 @@ import java.io.File;
 import java.io.IOException;
 
 public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
-    private static final String CHANNEL = "plugins.flutter.io/image_picker";
 
     private static final int REQUEST_ID = 1001010;
+
+    static final String METHOD_CALL_IMAGE = "pickImage";
+    static final String METHOD_CALL_VIDEO = "pickVideo";
+
+    static final String METHOD_CALL_REQUEST_FOR_PERMISSION = "requestForPermission";
+    static final String METHOD_CALL_GET_LATEST_IMAGE = "getLatestImage";
+    static final String METHOD_CALL_SAVE_FILE = "saveFile";
+
+
+    private static final String METHOD_CALL_RETRIEVE = "retrieve";
+
+    private static final String CHANNEL = "plugins.flutter.io/image_picker";
 
     private static final int SOURCE_CAMERA = 0;
     private static final int SOURCE_GALLERY = 1;
 
     private final PluginRegistry.Registrar registrar;
-    private final ImagePickerDelegate delegate;
+    private ImagePickerDelegate delegate;
+    private Application.ActivityLifecycleCallbacks activityLifecycleCallbacks;
 
     public static void registerWith(PluginRegistry.Registrar registrar) {
         if (registrar.activity() == null) {
@@ -35,103 +52,208 @@ public class ImagePickerPlugin implements MethodChannel.MethodCallHandler {
             // we stop the registering process immediately because the ImagePicker requires an activity.
             return;
         }
+        final ImagePickerCache cache = new ImagePickerCache(registrar.activity());
+
         final MethodChannel channel = new MethodChannel(registrar.messenger(), CHANNEL);
 
         final File externalFilesDirectory =
                 registrar.activity().getExternalFilesDir(Environment.DIRECTORY_PICTURES);
         final ExifDataCopier exifDataCopier = new ExifDataCopier();
         final ImageResizer imageResizer = new ImageResizer(externalFilesDirectory, exifDataCopier);
-
         final ImagePickerDelegate delegate =
-                new ImagePickerDelegate(registrar.activity(), externalFilesDirectory, imageResizer);
+                new ImagePickerDelegate(registrar.activity(), externalFilesDirectory, imageResizer, cache);
+
         registrar.addActivityResultListener(delegate);
         registrar.addRequestPermissionsResultListener(delegate);
-
         final ImagePickerPlugin instance = new ImagePickerPlugin(registrar, delegate);
         channel.setMethodCallHandler(instance);
     }
 
     @VisibleForTesting
-    ImagePickerPlugin(PluginRegistry.Registrar registrar, ImagePickerDelegate delegate) {
+    ImagePickerPlugin(final PluginRegistry.Registrar registrar, final ImagePickerDelegate delegate) {
         this.registrar = registrar;
         this.delegate = delegate;
+        this.activityLifecycleCallbacks =
+                new Application.ActivityLifecycleCallbacks() {
+                    @Override
+                    public void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+                    }
+
+                    @Override
+                    public void onActivityStarted(Activity activity) {
+                    }
+
+                    @Override
+                    public void onActivityResumed(Activity activity) {
+                    }
+
+                    @Override
+                    public void onActivityPaused(Activity activity) {
+                    }
+
+                    @Override
+                    public void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+                        if (activity == registrar.activity()) {
+                            delegate.saveStateBeforeResult();
+                        }
+                    }
+
+                    @Override
+                    public void onActivityDestroyed(Activity activity) {
+                        if (activity == registrar.activity()
+                                && registrar.activity().getApplicationContext() != null) {
+                            ((Application) registrar.activity().getApplicationContext())
+                                    .unregisterActivityLifecycleCallbacks(
+                                            this); // Use getApplicationContext() to avoid casting failures
+                        }
+                    }
+
+                    @Override
+                    public void onActivityStopped(Activity activity) {
+                    }
+                };
+
+        if (this.registrar != null
+                && this.registrar.context() != null
+                && this.registrar.context().getApplicationContext() != null) {
+            ((Application) this.registrar.context().getApplicationContext())
+                    .registerActivityLifecycleCallbacks(
+                            this
+                                    .activityLifecycleCallbacks); // Use getApplicationContext() to avoid casting failures.
+        }
+    }
+
+    // MethodChannel.Result wrapper that responds on the platform thread.
+    private static class MethodResultWrapper implements MethodChannel.Result {
+        private MethodChannel.Result methodResult;
+        private Handler handler;
+
+        MethodResultWrapper(MethodChannel.Result result) {
+            methodResult = result;
+            handler = new Handler(Looper.getMainLooper());
+        }
+
+        @Override
+        public void success(final Object result) {
+            handler.post(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            methodResult.success(result);
+                        }
+                    });
+        }
+
+        @Override
+        public void error(
+                final String errorCode, final String errorMessage, final Object errorDetails) {
+            handler.post(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            methodResult.error(errorCode, errorMessage, errorDetails);
+                        }
+                    });
+        }
+
+        @Override
+        public void notImplemented() {
+            handler.post(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            methodResult.notImplemented();
+                        }
+                    });
+        }
     }
 
     @Override
-    public void onMethodCall(MethodCall call, final MethodChannel.Result result) {
+    public void onMethodCall(MethodCall call, MethodChannel.Result rawResult) {
         if (registrar.activity() == null) {
-            result.error("no_activity", "image_picker plugin requires a foreground activity.", null);
+            rawResult.error("no_activity", "image_picker plugin requires a foreground activity.", null);
             return;
         }
-        if (call.method.equals("requestForPermission")) {
-            //API >=23
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                if (registrar.context().checkSelfPermission(
-                        Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        == PackageManager.PERMISSION_GRANTED &&
-                        registrar.context().checkSelfPermission(
-                                Manifest.permission.READ_EXTERNAL_STORAGE)
-                                == PackageManager.PERMISSION_GRANTED) {
-                    result.success(true);
-                } else {
-                    registrar.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
-                        @Override
-                        public boolean onRequestPermissionsResult(int id, String[] strings, int[] ints) {
-                            if (id == REQUEST_ID) {
-                                result.success(true);
-                                return true;
+        final MethodChannel.Result result = new MethodResultWrapper(rawResult);
+        int imageSource;
+        switch (call.method) {
+            case METHOD_CALL_REQUEST_FOR_PERMISSION:
+                //API >=23
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (registrar.context().checkSelfPermission(
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                            == PackageManager.PERMISSION_GRANTED &&
+                            registrar.context().checkSelfPermission(
+                                    Manifest.permission.READ_EXTERNAL_STORAGE)
+                                    == PackageManager.PERMISSION_GRANTED) {
+                        result.success(true);
+                    } else {
+                        registrar.addRequestPermissionsResultListener(new PluginRegistry.RequestPermissionsResultListener() {
+                            @Override
+                            public boolean onRequestPermissionsResult(int id, String[] strings, int[] ints) {
+                                if (id == REQUEST_ID) {
+                                    result.success(true);
+                                    return true;
+                                }
+                                result.success(null);
+                                return false;
                             }
-                            result.success(null);
-                            return false;
-                        }
-                    });
-                    registrar
-                            .activity()
-                            .requestPermissions(
-                                    new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                                            Manifest.permission.READ_EXTERNAL_STORAGE},
-                                    REQUEST_ID);
+                        });
+                        registrar
+                                .activity()
+                                .requestPermissions(
+                                        new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                                                Manifest.permission.READ_EXTERNAL_STORAGE},
+                                        REQUEST_ID);
+                    }
+
+                } else {
+                    result.success(true);
                 }
 
-            } else {
-                result.success(true);
-            }
-
-        } else if (call.method.equals("pickImage")) {
-            int imageSource = call.argument("source");
-            switch (imageSource) {
-                case SOURCE_GALLERY:
-                    delegate.chooseImageFromGallery(call, result);
-                    break;
-                case SOURCE_CAMERA:
-                    delegate.takeImageWithCamera(call, result);
-                    break;
-                default:
-                    throw new IllegalArgumentException("Invalid image source: " + imageSource);
-            }
-        } else if (call.method.equals("pickVideo")) {
-            int imageSource = call.argument("source");
-            switch (imageSource) {
-                case SOURCE_GALLERY:
-                    delegate.chooseVideoFromGallery(call, result);
-                    break;
-                case SOURCE_CAMERA:
-                    delegate.takeVideoWithCamera(call, result);
-                    break;
-                default:
-                    throw new IllegalArgumentException("Invalid video source: " + imageSource);
-            }
-        } else if (call.method.equals("getLatestImage")) {
-            delegate.getLatestPhoto(call, result);
-        } else if (call.method.equals("saveFile")) {
-            try {
-                delegate.saveImageToGallery(call, result);
-            } catch (IOException e) {
-                e.printStackTrace();
-                throw new IllegalArgumentException(e);
-            }
-        } else {
-            throw new IllegalArgumentException("Unknown method " + call.method);
+                break;
+            case METHOD_CALL_GET_LATEST_IMAGE:
+                delegate.getLatestPhoto(call, result);
+                break;
+            case METHOD_CALL_SAVE_FILE:
+                try {
+                    delegate.saveImageToGallery(call, result);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    throw new IllegalArgumentException(e);
+                }
+                break;
+            case METHOD_CALL_IMAGE:
+                imageSource = call.argument("source");
+                switch (imageSource) {
+                    case SOURCE_GALLERY:
+                        delegate.chooseImageFromGallery(call, result);
+                        break;
+                    case SOURCE_CAMERA:
+                        delegate.takeImageWithCamera(call, result);
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Invalid image source: " + imageSource);
+                }
+                break;
+            case METHOD_CALL_VIDEO:
+                imageSource = call.argument("source");
+                switch (imageSource) {
+                    case SOURCE_GALLERY:
+                        delegate.chooseVideoFromGallery(call, result);
+                        break;
+                    case SOURCE_CAMERA:
+                        delegate.takeVideoWithCamera(call, result);
+                        break;
+                    default:
+                        throw new IllegalArgumentException("Invalid video source: " + imageSource);
+                }
+                break;
+            case METHOD_CALL_RETRIEVE:
+                delegate.retrieveLostImage(result);
+                break;
+            default:
+                throw new IllegalArgumentException("Unknown method " + call.method);
         }
     }
 }
