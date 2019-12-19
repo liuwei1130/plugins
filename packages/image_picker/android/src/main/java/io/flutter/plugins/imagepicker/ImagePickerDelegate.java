@@ -1,4 +1,5 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+
+// Copyright 2019 The Flutter Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,16 +7,11 @@ package io.flutter.plugins.imagepicker;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.ContentResolver;
-import android.content.ContentUris;
-import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
 import android.database.Cursor;
-import android.graphics.Bitmap;
-import android.graphics.Matrix;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -35,16 +31,11 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.PluginRegistry;
 
-import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.URLConnection;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -86,8 +77,9 @@ import java.util.UUID;
  *
  * <p>C) User cancels picking an image. Finish with null result.
  */
-public class ImagePickerDelegate implements PluginRegistry.ActivityResultListener,
-                                            PluginRegistry.RequestPermissionsResultListener {
+public class ImagePickerDelegate
+        implements PluginRegistry.ActivityResultListener,
+        PluginRegistry.RequestPermissionsResultListener {
     @VisibleForTesting
     static final int REQUEST_CODE_CHOOSE_IMAGE_FROM_GALLERY = 2342;
     @VisibleForTesting
@@ -95,11 +87,15 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
     @VisibleForTesting
     static final int REQUEST_EXTERNAL_IMAGE_STORAGE_PERMISSION = 2344;
     @VisibleForTesting
+    static final int REQUEST_CAMERA_IMAGE_PERMISSION = 2345;
+    @VisibleForTesting
     static final int REQUEST_CODE_CHOOSE_VIDEO_FROM_GALLERY = 2352;
     @VisibleForTesting
     static final int REQUEST_CODE_TAKE_VIDEO_WITH_CAMERA = 2353;
     @VisibleForTesting
     static final int REQUEST_EXTERNAL_VIDEO_STORAGE_PERMISSION = 2354;
+    @VisibleForTesting
+    static final int REQUEST_CAMERA_VIDEO_PERMISSION = 2355;
 
     @VisibleForTesting
     static final int REQUEST_CREATE_DOCUMENT = 8000;
@@ -110,6 +106,7 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
     private final Activity activity;
     private final File externalFilesDirectory;
     private final ImageResizer imageResizer;
+    private final ImagePickerCache cache;
     private final PermissionManager permissionManager;
     private final IntentResolver intentResolver;
     private final FileUriResolver fileUriResolver;
@@ -121,6 +118,8 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
         boolean isPermissionGranted(String permissionName);
 
         void askForPermission(String permissionName, int requestCode);
+
+        boolean needRequestCameraPermission();
     }
 
     interface IntentResolver {
@@ -142,8 +141,17 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
     private MethodCall methodCall;
 
     public ImagePickerDelegate(
-            final Activity activity, File externalFilesDirectory, ImageResizer imageResizer) {
-        this(activity, externalFilesDirectory, imageResizer, null, null,
+            final Activity activity,
+            final File externalFilesDirectory,
+            final ImageResizer imageResizer,
+            final ImagePickerCache cache) {
+        this(
+                activity,
+                externalFilesDirectory,
+                imageResizer,
+                null,
+                null,
+                cache,
                 new PermissionManager() {
                     @Override
                     public boolean isPermissionGranted(String permissionName) {
@@ -153,8 +161,12 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
 
                     @Override
                     public void askForPermission(String permissionName, int requestCode) {
-                        ActivityCompat.requestPermissions(
-                                activity, new String[] {permissionName}, requestCode);
+                        ActivityCompat.requestPermissions(activity, new String[]{permissionName}, requestCode);
+                    }
+
+                    @Override
+                    public boolean needRequestCameraPermission() {
+                        return ImagePickerUtils.needRequestCameraPermission(activity);
                     }
                 },
                 new IntentResolver() {
@@ -170,10 +182,11 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
                     }
 
                     @Override
-                    public void getFullImagePath(
-                            final Uri imageUri, final OnPathReadyListener listener) {
-                        MediaScannerConnection.scanFile(activity,
-                                new String[] {(imageUri != null) ? imageUri.getPath() : ""}, null,
+                    public void getFullImagePath(final Uri imageUri, final OnPathReadyListener listener) {
+                        MediaScannerConnection.scanFile(
+                                activity,
+                                new String[]{(imageUri != null) ? imageUri.getPath() : ""},
+                                null,
                                 new MediaScannerConnection.OnScanCompletedListener() {
                                     @Override
                                     public void onScanCompleted(String path, Uri uri) {
@@ -190,9 +203,17 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
      * fields of this class. Otherwise those fields would have to be mutable and visible.
      */
     @VisibleForTesting
-    ImagePickerDelegate(Activity activity, File externalFilesDirectory, ImageResizer imageResizer,
-            MethodChannel.Result result, MethodCall methodCall, PermissionManager permissionManager,
-            IntentResolver intentResolver, FileUriResolver fileUriResolver, FileUtils fileUtils) {
+    ImagePickerDelegate(
+            final Activity activity,
+            final File externalFilesDirectory,
+            final ImageResizer imageResizer,
+            final MethodChannel.Result result,
+            final MethodCall methodCall,
+            final ImagePickerCache cache,
+            final PermissionManager permissionManager,
+            final IntentResolver intentResolver,
+            final FileUriResolver fileUriResolver,
+            final FileUtils fileUtils) {
         this.activity = activity;
         this.externalFilesDirectory = externalFilesDirectory;
         this.imageResizer = imageResizer;
@@ -203,56 +224,41 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
         this.intentResolver = intentResolver;
         this.fileUriResolver = fileUriResolver;
         this.fileUtils = fileUtils;
+        this.cache = cache;
     }
 
-    public void chooseVideoFromGallery(MethodCall methodCall, MethodChannel.Result result) {
-        if (!setPendingMethodCallAndResult(methodCall, result)) {
-            finishWithAlreadyActiveError(result);
+    void saveStateBeforeResult() {
+        if (methodCall == null) {
             return;
         }
 
-        if (!permissionManager.isPermissionGranted(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-            permissionManager.askForPermission(Manifest.permission.READ_EXTERNAL_STORAGE,
-                    REQUEST_EXTERNAL_VIDEO_STORAGE_PERMISSION);
-            return;
+        cache.saveTypeWithMethodCallName(methodCall.method);
+        cache.saveDimensionWithMethodCall(methodCall);
+        if (pendingCameraMediaUri != null) {
+            cache.savePendingCameraMediaUriPath(pendingCameraMediaUri);
         }
-
-        launchPickVideoFromGalleryIntent();
     }
 
-    private void launchPickVideoFromGalleryIntent() {
-        Intent pickVideoIntent = new Intent(Intent.ACTION_GET_CONTENT);
-        pickVideoIntent.setType("video/*");
+    void retrieveLostImage(MethodChannel.Result result) {
+        Map<String, Object> resultMap = cache.getCacheMap();
+        String path = (String) resultMap.get(cache.MAP_KEY_PATH);
+        if (path != null) {
+            Double maxWidth = (Double) resultMap.get(cache.MAP_KEY_MAX_WIDTH);
+            Double maxHeight = (Double) resultMap.get(cache.MAP_KEY_MAX_HEIGHT);
+            int imageQuality =
+                    resultMap.get(cache.MAP_KEY_IMAGE_QUALITY) == null
+                            ? 100
+                            : (int) resultMap.get(cache.MAP_KEY_IMAGE_QUALITY);
 
-        activity.startActivityForResult(pickVideoIntent, REQUEST_CODE_CHOOSE_VIDEO_FROM_GALLERY);
-    }
-
-    public void takeVideoWithCamera(MethodCall methodCall, MethodChannel.Result result) {
-        if (!setPendingMethodCallAndResult(methodCall, result)) {
-            finishWithAlreadyActiveError(result);
-            return;
+            String newPath = imageResizer.resizeImageIfNeeded(path, maxWidth, maxHeight, imageQuality);
+            resultMap.put(cache.MAP_KEY_PATH, newPath);
         }
-
-        launchTakeVideoWithCameraIntent();
-    }
-
-    private void launchTakeVideoWithCameraIntent() {
-        Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-        boolean canTakePhotos = intentResolver.resolveActivity(intent);
-
-        if (!canTakePhotos) {
-            finishWithError("no_available_camera", "No cameras available for taking pictures.");
-            return;
+        if (resultMap.isEmpty()) {
+            result.success(null);
+        } else {
+            result.success(resultMap);
         }
-
-        File videoFile = createTemporaryWritableVideoFile();
-        pendingCameraMediaUri = Uri.parse("file:" + videoFile.getAbsolutePath());
-
-        Uri videoUri = fileUriResolver.resolveFileProviderUriForFile(fileProviderName, videoFile);
-        intent.putExtra(MediaStore.EXTRA_OUTPUT, videoUri);
-        grantUriPermissions(intent, videoUri);
-
-        activity.startActivityForResult(intent, REQUEST_CODE_TAKE_VIDEO_WITH_CAMERA);
+        cache.clear();
     }
 
     public void getLatestPhoto(MethodCall methodCall, MethodChannel.Result result) {
@@ -269,149 +275,6 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
             }
             result.success(pair.second);
         }
-    }
-
-    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
-    public void saveImageToGallery(MethodCall methodCall, MethodChannel.Result result)
-            throws IOException {
-        if (!setPendingMethodCallAndResult(methodCall, result)) {
-            finishWithAlreadyActiveError(result);
-            return;
-        }
-
-        String title = methodCall.argument("title");
-        if (title == null) {
-            title = "Camera";
-        }
-
-        mData.clear();
-        mData.putByteArray("bytes", (byte[]) methodCall.argument("fileData"));
-
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
-                                .addCategory(Intent.CATEGORY_OPENABLE)
-                                .setType((String) methodCall.argument("mimeType"))
-                                .putExtra(Intent.EXTRA_TITLE, title);
-        activity.startActivityForResult(intent, REQUEST_CREATE_DOCUMENT);
-    }
-
-    private String insertImage(ContentResolver cr, byte[] source, String title, String description)
-            throws IOException {
-        InputStream is = new BufferedInputStream(new ByteArrayInputStream(source));
-        String mimeType = URLConnection.guessContentTypeFromStream(is);
-
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.TITLE, title);
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, title);
-        values.put(MediaStore.Images.Media.DESCRIPTION, description);
-        values.put(MediaStore.Images.Media.MIME_TYPE, mimeType);
-        // Add the date meta data to ensure the image is added at the front of the gallery
-        values.put(MediaStore.Images.Media.DATE_ADDED, System.currentTimeMillis());
-        values.put(MediaStore.Images.Media.DATE_TAKEN, System.currentTimeMillis());
-
-        Uri url = null;
-        String stringUrl = ""; /* value to be returned */
-
-        try {
-            url = cr.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
-
-            if (source != null) {
-                OutputStream imageOut = cr.openOutputStream(url);
-                try {
-                    // source.compress(Bitmap.CompressFormat.JPEG, 100, imageOut);
-                    imageOut.write(source);
-                } finally {
-                    imageOut.close();
-                }
-
-                long id = ContentUris.parseId(url);
-                // Wait until MINI_KIND thumbnail is generated.
-                Bitmap miniThumb = MediaStore.Images.Thumbnails.getThumbnail(
-                        cr, id, MediaStore.Images.Thumbnails.MINI_KIND, null);
-                // This is for backward compatibility.
-                storeThumbnail(
-                        cr, miniThumb, id, 50F, 50F, MediaStore.Images.Thumbnails.MICRO_KIND);
-
-            } else {
-                cr.delete(url, null, null);
-                url = null;
-            }
-        } catch (Exception e) {
-            if (url != null) {
-                cr.delete(url, null, null);
-                url = null;
-            }
-        }
-
-        if (url != null) {
-            stringUrl = getFilePathFromContentUri(url, cr);
-        }
-
-        return stringUrl;
-    }
-
-    /**
-     * A copy of the Android internals StoreThumbnail method, it used with the insertImage to
-     * populate the android.provider.MediaStore.Images.Media#insertImage with all the correct
-     * meta data. The StoreThumbnail method is private so it must be duplicated here.
-     *
-     * @see android.provider.MediaStore.Images.Media (StoreThumbnail private method)
-     */
-    private Bitmap storeThumbnail(
-            ContentResolver cr, Bitmap source, long id, float width, float height, int kind) {
-        // create the matrix to scale it
-        Matrix matrix = new Matrix();
-
-        float scaleX = width / source.getWidth();
-        float scaleY = height / source.getHeight();
-
-        matrix.setScale(scaleX, scaleY);
-
-        Bitmap thumb = Bitmap.createBitmap(
-                source, 0, 0, source.getWidth(), source.getHeight(), matrix, true);
-
-        ContentValues values = new ContentValues(4);
-        values.put(MediaStore.Images.Thumbnails.KIND, kind);
-        values.put(MediaStore.Images.Thumbnails.IMAGE_ID, (int) id);
-        values.put(MediaStore.Images.Thumbnails.HEIGHT, thumb.getHeight());
-        values.put(MediaStore.Images.Thumbnails.WIDTH, thumb.getWidth());
-
-        Uri url = cr.insert(MediaStore.Images.Thumbnails.EXTERNAL_CONTENT_URI, values);
-
-        try {
-            OutputStream thumbOut = cr.openOutputStream(url);
-            // thumb.compress(Bitmap.CompressFormat.JPEG, 100, thumbOut);
-            thumbOut.close();
-            return thumb;
-        } catch (FileNotFoundException ex) {
-            return null;
-        } catch (IOException ex) {
-            return null;
-        }
-    }
-
-    /**
-     * Gets the corresponding path to a file from the given content:// URI
-     *
-     * @param selectedVideoUri The content:// URI to find the file path from
-     * @param contentResolver  The content resolver to use to perform the query.
-     * @return the file path as a string
-     */
-    public static String getFilePathFromContentUri(
-            Uri selectedVideoUri, ContentResolver contentResolver) {
-        String filePath;
-        String[] filePathColumn = {MediaStore.MediaColumns.DATA};
-
-        Cursor cursor = contentResolver.query(selectedVideoUri, filePathColumn, null, null, null);
-        // 也可用下面的方法拿到cursor
-        // Cursor cursor = this.context.managedQuery(selectedVideoUri, filePathColumn,
-        // null, null, null);
-
-        cursor.moveToFirst();
-
-        int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
-        filePath = cursor.getString(columnIndex);
-        cursor.close();
-        return filePath;
     }
 
     /**
@@ -448,23 +311,86 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
         return cameraPair;
     }
 
-    private String getBucketId(String path) {
-        return String.valueOf(path.toLowerCase().hashCode());
+
+    @RequiresApi(api = Build.VERSION_CODES.KITKAT)
+    public void saveImageToGallery(MethodCall methodCall, MethodChannel.Result result)
+            throws IOException {
+        if (!setPendingMethodCallAndResult(methodCall, result)) {
+            finishWithAlreadyActiveError(result);
+            return;
+        }
+
+        String title = methodCall.argument("title");
+        if (title == null) {
+            title = "Camera";
+        }
+
+        mData.clear();
+        mData.putByteArray("bytes", (byte[]) methodCall.argument("fileData"));
+
+        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .setType((String) methodCall.argument("mimeType"))
+                .putExtra(Intent.EXTRA_TITLE, title);
+        activity.startActivityForResult(intent, REQUEST_CREATE_DOCUMENT);
     }
 
-    /**
-     * 获取截图路径
-     *
-     * @return
-     */
-    private String getScreenshotsPath() {
-        String path = Environment.getExternalStorageDirectory().toString() + "/DCIM/Screenshots";
-        File file = new File(path);
-        if (!file.exists()) {
-            path = Environment.getExternalStorageDirectory().toString() + "/Pictures/Screenshots";
+
+    public void chooseVideoFromGallery(MethodCall methodCall, MethodChannel.Result result) {
+        if (!setPendingMethodCallAndResult(methodCall, result)) {
+            finishWithAlreadyActiveError(result);
+            return;
         }
-        file = null;
-        return path;
+
+        if (!permissionManager.isPermissionGranted(Manifest.permission.READ_EXTERNAL_STORAGE)) {
+            permissionManager.askForPermission(
+                    Manifest.permission.READ_EXTERNAL_STORAGE, REQUEST_EXTERNAL_VIDEO_STORAGE_PERMISSION);
+            return;
+        }
+
+        launchPickVideoFromGalleryIntent();
+    }
+
+    private void launchPickVideoFromGalleryIntent() {
+        Intent pickVideoIntent = new Intent(Intent.ACTION_GET_CONTENT);
+        pickVideoIntent.setType("video/*");
+
+        activity.startActivityForResult(pickVideoIntent, REQUEST_CODE_CHOOSE_VIDEO_FROM_GALLERY);
+    }
+
+    public void takeVideoWithCamera(MethodCall methodCall, MethodChannel.Result result) {
+        if (!setPendingMethodCallAndResult(methodCall, result)) {
+            finishWithAlreadyActiveError(result);
+            return;
+        }
+
+        if (needRequestCameraPermission()
+                && !permissionManager.isPermissionGranted(Manifest.permission.CAMERA)) {
+            permissionManager.askForPermission(
+                    Manifest.permission.CAMERA, REQUEST_CAMERA_VIDEO_PERMISSION);
+            return;
+        }
+
+        launchTakeVideoWithCameraIntent();
+    }
+
+    private void launchTakeVideoWithCameraIntent() {
+        Intent intent = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
+        boolean canTakePhotos = intentResolver.resolveActivity(intent);
+
+        if (!canTakePhotos) {
+            finishWithError("no_available_camera", "No cameras available for taking pictures.");
+            return;
+        }
+
+        File videoFile = createTemporaryWritableVideoFile();
+        pendingCameraMediaUri = Uri.parse("file:" + videoFile.getAbsolutePath());
+
+        Uri videoUri = fileUriResolver.resolveFileProviderUriForFile(fileProviderName, videoFile);
+        intent.putExtra(MediaStore.EXTRA_OUTPUT, videoUri);
+        grantUriPermissions(intent, videoUri);
+
+        activity.startActivityForResult(intent, REQUEST_CODE_TAKE_VIDEO_WITH_CAMERA);
     }
 
     public void chooseImageFromGallery(MethodCall methodCall, MethodChannel.Result result) {
@@ -474,8 +400,8 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
         }
 
         if (!permissionManager.isPermissionGranted(Manifest.permission.READ_EXTERNAL_STORAGE)) {
-            permissionManager.askForPermission(Manifest.permission.READ_EXTERNAL_STORAGE,
-                    REQUEST_EXTERNAL_IMAGE_STORAGE_PERMISSION);
+            permissionManager.askForPermission(
+                    Manifest.permission.READ_EXTERNAL_STORAGE, REQUEST_EXTERNAL_IMAGE_STORAGE_PERMISSION);
             return;
         }
 
@@ -495,7 +421,21 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
             return;
         }
 
+        if (needRequestCameraPermission()
+                && !permissionManager.isPermissionGranted(Manifest.permission.CAMERA)) {
+            permissionManager.askForPermission(
+                    Manifest.permission.CAMERA, REQUEST_CAMERA_IMAGE_PERMISSION);
+            return;
+        }
+
         launchTakeImageWithCameraIntent();
+    }
+
+    private boolean needRequestCameraPermission() {
+        if (permissionManager == null) {
+            return false;
+        }
+        return permissionManager.needRequestCameraPermission();
     }
 
     private void launchTakeImageWithCameraIntent() {
@@ -544,7 +484,9 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
                 packageManager.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY);
 
         for (ResolveInfo info : compatibleActivities) {
-            activity.grantUriPermission(info.activityInfo.packageName, imageUri,
+            activity.grantUriPermission(
+                    info.activityInfo.packageName,
+                    imageUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
         }
     }
@@ -566,12 +508,31 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
                     launchPickVideoFromGalleryIntent();
                 }
                 break;
+            case REQUEST_CAMERA_IMAGE_PERMISSION:
+                if (permissionGranted) {
+                    launchTakeImageWithCameraIntent();
+                }
+                break;
+            case REQUEST_CAMERA_VIDEO_PERMISSION:
+                if (permissionGranted) {
+                    launchTakeVideoWithCameraIntent();
+                }
+                break;
             default:
                 return false;
         }
 
         if (!permissionGranted) {
-            finishWithSuccess(null);
+            switch (requestCode) {
+                case REQUEST_EXTERNAL_IMAGE_STORAGE_PERMISSION:
+                case REQUEST_EXTERNAL_VIDEO_STORAGE_PERMISSION:
+                    finishWithError("photo_access_denied", "The user did not allow photo access.");
+                    break;
+                case REQUEST_CAMERA_IMAGE_PERMISSION:
+                case REQUEST_CAMERA_VIDEO_PERMISSION:
+                    finishWithError("camera_access_denied", "The user did not allow camera access.");
+                    break;
+            }
         }
 
         return true;
@@ -626,12 +587,16 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
 
     private void handleCaptureImageResult(int resultCode) {
         if (resultCode == Activity.RESULT_OK) {
-            fileUriResolver.getFullImagePath(pendingCameraMediaUri, new OnPathReadyListener() {
-                @Override
-                public void onPathReady(String path) {
-                    handleImageResult(path, true);
-                }
-            });
+            fileUriResolver.getFullImagePath(
+                    pendingCameraMediaUri != null
+                            ? pendingCameraMediaUri
+                            : Uri.parse(cache.retrievePendingCameraMediaUriPath()),
+                    new OnPathReadyListener() {
+                        @Override
+                        public void onPathReady(String path) {
+                            handleImageResult(path, true);
+                        }
+                    });
             return;
         }
 
@@ -641,17 +606,45 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
 
     private void handleCaptureVideoResult(int resultCode) {
         if (resultCode == Activity.RESULT_OK) {
-            fileUriResolver.getFullImagePath(pendingCameraMediaUri, new OnPathReadyListener() {
-                @Override
-                public void onPathReady(String path) {
-                    handleVideoResult(path);
-                }
-            });
+            fileUriResolver.getFullImagePath(
+                    pendingCameraMediaUri != null
+                            ? pendingCameraMediaUri
+                            : Uri.parse(cache.retrievePendingCameraMediaUriPath()),
+                    new OnPathReadyListener() {
+                        @Override
+                        public void onPathReady(String path) {
+                            handleVideoResult(path);
+                        }
+                    });
             return;
         }
 
         // User cancelled taking a picture.
         finishWithSuccess(null);
+    }
+
+    private void handleImageResult(String path, boolean shouldDeleteOriginalIfScaled) {
+        if (methodCall != null) {
+            Double maxWidth = methodCall.argument("maxWidth");
+            Double maxHeight = methodCall.argument("maxHeight");
+            Integer imageQuality = methodCall.argument("imageQuality");
+
+            String finalImagePath =
+                    imageResizer.resizeImageIfNeeded(path, maxWidth, maxHeight, imageQuality);
+
+            finishWithSuccess(finalImagePath);
+
+            //delete original file if scaled
+            if (finalImagePath != null && !finalImagePath.equals(path) && shouldDeleteOriginalIfScaled) {
+                new File(path).delete();
+            }
+        } else {
+            finishWithSuccess(path);
+        }
+    }
+
+    private void handleVideoResult(String path) {
+        finishWithSuccess(path);
     }
 
     private void handleCreateDocumentResult(int resultCode, Intent data) {
@@ -675,25 +668,6 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
         mData.clear();
     }
 
-    private void handleImageResult(String path, boolean shouldDeleteOriginalIfScaled) {
-        if (pendingResult != null) {
-            Double maxWidth = methodCall.argument("maxWidth");
-            Double maxHeight = methodCall.argument("maxHeight");
-
-            String finalImagePath = imageResizer.resizeImageIfNeeded(path, maxWidth, maxHeight);
-            finishWithSuccess(finalImagePath);
-
-            // delete original file if scaled
-            if (!finalImagePath.equals(path) && shouldDeleteOriginalIfScaled) {
-                new File(path).delete();
-            }
-        }
-    }
-
-    private void handleVideoResult(String path) {
-        finishWithSuccess(path);
-    }
-
     private boolean setPendingMethodCallAndResult(
             MethodCall methodCall, MethodChannel.Result result) {
         if (pendingResult != null) {
@@ -702,11 +676,16 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
 
         this.methodCall = methodCall;
         pendingResult = result;
+
+        // Clean up cache if a new image picker is launched.
+        cache.clear();
+
         return true;
     }
 
     private void finishWithSuccess(String imagePath) {
         if (pendingResult == null) {
+            cache.saveResult(imagePath, null, null);
             return;
         }
         pendingResult.success(imagePath);
@@ -719,6 +698,7 @@ public class ImagePickerDelegate implements PluginRegistry.ActivityResultListene
 
     private void finishWithError(String errorCode, String errorMessage) {
         if (pendingResult == null) {
+            cache.saveResult(null, errorCode, errorMessage);
             return;
         }
         pendingResult.error(errorCode, errorMessage, null);
