@@ -494,8 +494,8 @@ public class ImagePickerDelegate
     @Override
     public boolean onRequestPermissionsResult(
             int requestCode, String[] permissions, int[] grantResults) {
-        boolean permissionGranted =
-                grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        boolean permissionGranted = grantResults != null && grantResults.length > 0
+                && grantResults[0] == PackageManager.PERMISSION_GRANTED;
 
         switch (requestCode) {
             case REQUEST_EXTERNAL_IMAGE_STORAGE_PERMISSION:
