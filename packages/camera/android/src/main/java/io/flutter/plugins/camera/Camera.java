@@ -7,6 +7,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.ImageFormat;
+import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -564,6 +565,68 @@ public class Camera {
 //        null);
 //  }
 
+  private ByteBuffer imageToByteBuffer(final Image image) {
+      final Rect crop = image.getCropRect();
+      final int width = crop.width();
+      final int height = crop.height();
+
+      final Image.Plane[] planes = image.getPlanes();
+      final byte[] rowData = new byte[planes[0].getRowStride()];
+      final int bufferSize =
+          width * height * ImageFormat.getBitsPerPixel(ImageFormat.YUV_420_888) / 8;
+      final ByteBuffer output = ByteBuffer.allocateDirect(bufferSize);
+
+      int channelOffset = 0;
+      int outputStride = 0;
+
+      for (int planeIndex = 0; planeIndex < 3; planeIndex++) {
+          if (planeIndex == 0) {
+              channelOffset = 0;
+              outputStride = 1;
+          } else if (planeIndex == 1) {
+              channelOffset = width * height + 1;
+              outputStride = 2;
+          } else if (planeIndex == 2) {
+              channelOffset = width * height;
+              outputStride = 2;
+          }
+
+          final ByteBuffer buffer = planes[planeIndex].getBuffer();
+          final int rowStride = planes[planeIndex].getRowStride();
+          final int pixelStride = planes[planeIndex].getPixelStride();
+
+          final int shift = (planeIndex == 0) ? 0 : 1;
+          final int widthShifted = width >> shift;
+          final int heightShifted = height >> shift;
+
+          buffer.position(rowStride * (crop.top >> shift) + pixelStride * (crop.left >> shift));
+
+          for (int row = 0; row < heightShifted; row++) {
+              final int length;
+
+              if (pixelStride == 1 && outputStride == 1) {
+                  length = widthShifted;
+                  buffer.get(output.array(), channelOffset, length);
+                  channelOffset += length;
+              } else {
+                  length = (widthShifted - 1) * pixelStride + 1;
+                  buffer.get(rowData, 0, length);
+
+                  for (int col = 0; col < widthShifted; col++) {
+                      output.array()[channelOffset] = rowData[col * pixelStride];
+                      channelOffset += outputStride;
+                  }
+              }
+
+              if (row < heightShifted - 1) {
+                  buffer.position(buffer.position() + rowStride - length);
+              }
+          }
+      }
+
+      return output;
+  }
+
   private void setImageStreamImageAvailableListener(final EventChannel.EventSink eventSink) {
     imageStreamReader.setOnImageAvailableListener(
             new ImageReader.OnImageAvailableListener() {
@@ -579,24 +642,27 @@ public class Camera {
 
                   List<Map<String, Object>> planes = new ArrayList<>();
 
-                  ByteBuffer Y = img.getPlanes()[0].getBuffer();
-                  ByteBuffer U = img.getPlanes()[1].getBuffer();
-                  ByteBuffer V = img.getPlanes()[2].getBuffer();
+                  ByteBuffer buffer = imageToByteBuffer(img);
+                  byte[] data = new byte[buffer.remaining()];
+                  buffer.get(data);
 
-                  int Yb = Y.remaining();
-                  int Ub = U.remaining();
-                  int Vb = V.remaining();
-
-                  byte[] data = new byte[Yb + Ub + Vb];
-
-                  Y.get(data, 0, Yb);
-                  V.get(data, Yb, Vb);
-                  U.get(data, Yb + Vb, Ub);
                   byte[] bytes = NV21toRGBA(data, img.getWidth(), img.getHeight());
                   Map<String, Object> planeBuffer = new HashMap<>();
                   boolean isRotate = img.getWidth() > img.getHeight();
                   if (BuildConfig.DEBUG) {
-                    Log.d(TAG, "get image isRotate : " + isRotate);
+                    Log.d(TAG, "Image format: " + img.getFormat() + "; rotated? " + isRotate);
+                    Log.d(TAG, "Image size: " + img.getWidth() + "*" + img.getHeight());
+                    // Log.d(TAG, "Y: " + Yb);
+                    // Log.d(TAG, "U: " + Ub);
+                    // Log.d(TAG, "V: " + Vb);
+
+                    int i = 0;
+                    for (Image.Plane plane : img.getPlanes()) {
+                      Log.d(TAG,
+                              "Plane #" + (i++)
+                              + ":\n\tbytes per row: " + plane.getRowStride()
+                              + "\n\tbytes per pixel: " + plane.getPixelStride());
+                    }
                   }
                   if (isRotate) {
                     if (getMediaOrientation() == 270) {
